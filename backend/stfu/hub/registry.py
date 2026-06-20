@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 
 _ID_PATTERN = re.compile(r'^[A-Za-z0-9_.\-]{1,64}$')
 _DANGEROUS_TOKENS = frozenset({
-    '__builtins__', 'os', 'subprocess', 'sys', 'importlib', 'eval', 'exec',
+    '__builtins__', 'builtins', 'os', 'subprocess', 'sys', 'importlib', 'eval', 'exec',
 })
 
 

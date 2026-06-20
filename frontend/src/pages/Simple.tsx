@@ -25,6 +25,8 @@ export function Simple() {
   const [micOn, setMicOn] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(false);
   const [strength, setStrength] = useState(85);
+  const [selectedInput, setSelectedInput] = useState<number | undefined>(undefined);
+  const [selectedOutput, setSelectedOutput] = useState<number | undefined>(undefined);
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
 
@@ -44,7 +46,11 @@ export function Simple() {
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium text-sm">🎙 Micrófono</p>
-            <select className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate">
+            <select
+              className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
+              value={selectedInput ?? inputs[0]?.id}
+              onChange={(e) => setSelectedInput(Number(e.target.value))}
+            >
               {inputs.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.name}
@@ -72,7 +78,11 @@ export function Simple() {
       <div className="bg-zinc-800 rounded-xl p-5 flex items-center justify-between">
         <div>
           <p className="font-medium text-sm">🔊 Altavoces</p>
-          <select className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate">
+          <select
+            className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
+            value={selectedOutput ?? outputs[0]?.id}
+            onChange={(e) => setSelectedOutput(Number(e.target.value))}
+          >
             {outputs.map((d) => (
               <option key={d.id} value={d.id}>
                 {d.name}

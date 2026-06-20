@@ -3,7 +3,7 @@ param([switch]$SkipVBCable)
 
 Write-Host "STFU Setup" -ForegroundColor Cyan
 
-$dataDir = "$env:APPDATA\stfu"
+$dataDir = "$env:USERPROFILE\.stfu"
 New-Item -ItemType Directory -Force -Path "$dataDir\models" | Out-Null
 New-Item -ItemType Directory -Force -Path "$dataDir\plugins" | Out-Null
 Write-Host "✓ Directorio de datos: $dataDir"
