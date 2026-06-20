@@ -2,6 +2,7 @@
 
 import struct
 import threading
+import time
 import numpy as np
 
 # Try importing win32 modules; they're only available on Windows with pywin32 installed
@@ -76,6 +77,7 @@ class ApoPipeServer:
     def _accept_loop(self) -> None:
         """Accept incoming client connections."""
         while not self._stop_event.is_set():
+            pipe = None
             try:
                 pipe = win32pipe.CreateNamedPipe(
                     self._pipe_name,
@@ -87,12 +89,17 @@ class ApoPipeServer:
                 win32pipe.ConnectNamedPipe(pipe, None)
                 threading.Thread(target=self._handle_client, args=(pipe,), daemon=True).start()
             except pywintypes.error:
-                pass
+                if pipe is not None:
+                    win32file.CloseHandle(pipe)
 
     def _handle_client(self, pipe) -> None:
         """Handle a single client connection."""
         try:
             while not self._stop_event.is_set():
+                _, avail, _ = win32pipe.PeekNamedPipe(pipe, 0)
+                if avail == 0:
+                    time.sleep(0.01)
+                    continue
                 _, data = win32file.ReadFile(pipe, 65536)
                 req = parse_request_frame(bytes(data))
                 processed = self._pipeline.process(req["audio"].copy())
