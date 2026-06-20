@@ -94,3 +94,46 @@ def test_dfn3_strength_parameter():
 
 def test_dfn3_latency():
     assert DeepFilterNet3Plugin().algorithmic_latency_ms == pytest.approx(40.0)
+
+
+from stfu.plugins.builtin.gain import GainPlugin
+from stfu.plugins.builtin.eq_parametric import EQParametricPlugin
+
+
+def test_gain_zero_db_is_passthrough():
+    p = GainPlugin()
+    p.setup(AudioFormat(48000, 1, 960))
+    audio = np.random.randn(960, 1).astype(np.float32)
+    np.testing.assert_array_almost_equal(p.process(audio), audio)
+
+
+def test_gain_plus_6db():
+    p = GainPlugin()
+    p.setup(AudioFormat(48000, 1, 960))
+    p.set_parameter("gain_db", 6.0)
+    audio = np.ones((960, 1), dtype=np.float32)
+    expected = 10 ** (6.0 / 20.0)
+    np.testing.assert_array_almost_equal(p.process(audio), np.full_like(audio, expected), decimal=4)
+
+
+def test_gain_accepts_any_format():
+    p = GainPlugin()
+    fmt = AudioFormat(44100, 2, 1024)
+    assert p.setup(fmt) == fmt
+
+
+def test_eq_has_five_bands():
+    p = EQParametricPlugin()
+    ids = {x.id for x in p.parameters}
+    for i in range(1, 6):
+        assert f"band_{i}_gain_db" in ids
+        assert f"band_{i}_freq" in ids
+        assert f"band_{i}_q" in ids
+
+
+def test_eq_zero_gain_passthrough():
+    p = EQParametricPlugin()
+    fmt = AudioFormat(48000, 1, 960)
+    p.setup(fmt)
+    audio = np.random.randn(960, 1).astype(np.float32)
+    np.testing.assert_array_almost_equal(p.process(audio), audio, decimal=5)
