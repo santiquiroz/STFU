@@ -1,5 +1,5 @@
 # STFU — Design Specification
-**Date:** 2026-06-19
+**Date:** 2026-06-19 (revised 2026-06-20)
 **Status:** Approved
 **Scope:** v1 MVP — Bidirectional noise cancellation, Windows
 
@@ -11,6 +11,8 @@ NVIDIA Broadcast requires an RTX GPU. AMD Noise Suppression is a single closed-s
 
 STFU is an open-source alternative that runs on any Windows GPU or CPU via DirectML, supports community models via HuggingFace, and is built on a generic plugin pipeline that does not assume any specific model format or audio configuration.
 
+**Why no VB-Cable:** VB-Cable is proprietary. The free tier limits bandwidth and channels. STFU ships entirely open-source — zero third-party proprietary dependencies. The speaker NC problem (intercepting system audio before it reaches headphones) is solved via Windows APO for v1 and a full WDM virtual device for v2.
+
 ---
 
 ## 2. Goals (v1 MVP)
@@ -19,15 +21,16 @@ STFU is an open-source alternative that runs on any Windows GPU or CPU via Direc
 - Run on CPU or any DirectX 12 GPU (AMD, NVIDIA, Intel) via ONNX Runtime + DirectML
 - Per-plugin processor selection — user chooses which device runs each effect
 - Built-in model: DeepFilterNet3 (40ms algorithmic latency, CPU viable)
-- System tray app for Windows 11 (Windows 10 with VB-Cable fallback)
+- System tray app for Windows 11 (Windows 10 compatible)
 - Simple UI (toggle + slider) and Advanced UI (plugin chain editor)
+- Zero proprietary dependencies — all components MIT/Apache/BSD licensed
 
 ## 3. Non-Goals (v1)
 
 - Cross-platform support (Linux, macOS deferred)
 - Voice cloning or real-time voice conversion (v2)
 - Music source separation (v2)
-- Own WDM virtual audio driver (v2 — see Section 9)
+- Per-app audio routing / WDM virtual audio device (v2 — see Section 9)
 - VST/CLAP plugin format (v3)
 
 ---
@@ -38,21 +41,30 @@ Three independent processes with clear boundaries:
 
 ```
 [Physical Mic]
-     │  WASAPI exclusive/shared mode (sounddevice)
+     │  WASAPI shared mode (sounddevice)
      ▼
-[Python Audio Service]          ← audio I/O + inference + FastAPI
-     │  HTTP / WebSocket (localhost)
+[STFU APO (MFX)]   ← COM DLL in Windows audio engine (audiodg.exe)
+     │  Named pipe → Python service → DeepFilterNet3 → named pipe
      ▼
-[Tauri + React UI]              ← UI shell, tray icon
+[Clean audio] → [Discord / OBS / Zoom] (use physical mic, see clean audio)
 
-[Virtual Mic] → [Discord / OBS / Teams]
-     ↑
-[Windows APO (W11) / VB-Cable (W10)]
+[Apps playing audio]
+     │
+     ▼
+[Windows audio engine]
+     │
+[STFU APO (SFX)]   ← same COM DLL, registered on output endpoint
+     │  Named pipe → Python service → DeepFilterNet3 → named pipe
+     ▼
+[Physical Speaker / Headphones]
+
+[Tauri + React UI] ← thin shell, talks to Python service via HTTP
+[Python Audio Service] ← FastAPI + pipeline + APO named pipe server
 ```
 
-**Python Audio Service** owns all audio processing. It starts as a background process on login and exposes a local FastAPI server. The Tauri UI is a thin shell that renders the React frontend and communicates with the service via HTTP.
+**APO (Audio Processing Object):** A user-mode COM DLL that Windows audio engine (audiodg.exe) loads inline. The engine calls the APO on every audio block — no separate thread, no virtual device. When STFU APO is registered on the Blue Snowball endpoint, Zoom capturing from Blue Snowball automatically receives STFU-processed audio. When registered on the FiiO Q output endpoint, all audio played through it is NC'd before reaching headphones.
 
-This is intentionally the same pattern as bipolar-code (FastAPI backend + Tauri frontend) for consistency and maintainability.
+**Python Audio Service** owns all audio processing. It starts as a background process on login, exposes a local FastAPI server (HTTP for control) and a named pipe server (real-time audio for APO). The Tauri UI is a thin shell.
 
 ---
 
@@ -125,27 +137,26 @@ Handles three conversions transparently:
 ### Threading model
 
 ```
-Thread 1: WASAPI capture  → ring_buffer_in
-Thread 2: Pipeline        → ring_buffer_in → process → ring_buffer_out
-Thread 3: WASAPI playback → ring_buffer_out
-Thread 4: Speaker loopback capture → pipeline_speaker → physical speakers
-Thread 5: FastAPI server  (async)
+Thread 1: APO pipe server    → ring_buffer_apo_mic  (audio from Windows audio engine)
+Thread 2: Pipeline mic       → ring_buffer_apo_mic → DeepFilterNet3 → ring_buffer_out_mic
+Thread 3: APO pipe response  → ring_buffer_out_mic → reply to APO
+Thread 4: APO pipe server    → ring_buffer_apo_spk  (audio from speaker APO)
+Thread 5: Pipeline speaker   → ring_buffer_apo_spk → DeepFilterNet3 → ring_buffer_out_spk
+Thread 6: APO pipe response  → ring_buffer_out_spk → reply to APO
+Thread 7: FastAPI server     (async)
+Thread 8: [Testing only] WASAPI direct capture → pipeline → headphones (no APO)
 ```
 
-ONNX Runtime releases the Python GIL during C++ inference — threads 1-4 do not block each other.
+ONNX Runtime releases the Python GIL during C++ inference — threads do not block each other.
 
-### Latency budget example
+### Latency budget example (APO path)
 
 ```
-Capture buffer:          10ms
-DeepFilterNet3:          40ms  (algorithmic, fixed)
-Adapter (if needed):      2ms  (buffering)
-Playback buffer:         10ms
-─────────────────────────────
-Total minimum:           62ms
+Windows audio engine buffers: 10ms
+Named pipe round-trip:         2ms
+DeepFilterNet3:               40ms  (algorithmic, fixed)
+Total:                        52ms
 ```
-
-The UI shows this budget as a visual bar per plugin and a total display.
 
 ---
 
@@ -170,7 +181,7 @@ stfu/plugins/builtin/   ← installed with app
 %APPDATA%\stfu\plugins\ ← user / community plugins
 ```
 
-Scanned at service startup with `importlib`. Any class inheriting `AudioPlugin` is registered. No restart required after adding a plugin file.
+Scanned at service startup with `importlib`. Any class inheriting `AudioPlugin` is registered.
 
 ### Parameter system
 
@@ -186,7 +197,7 @@ class Parameter:
     options: list[str] = None   # for enum
 ```
 
-Parameters are read by the FastAPI layer and sent to the React UI, which renders them dynamically (slider for float/int, toggle for bool, dropdown for enum). Adding a new parameter to a plugin requires no frontend changes.
+Parameters are read by the FastAPI layer and sent to the React UI, which renders them dynamically.
 
 ---
 
@@ -231,14 +242,7 @@ Every model has a `manifest.json`:
 
 ### HuggingFace integration
 
-Community models are discovered via HuggingFace model search filtered by tag `stfu-compatible`. Download via `huggingface_hub.hf_hub_download()`. The hub UI polls the FastAPI `/models/available` endpoint which queries HuggingFace.
-
-### Publishing a community model
-
-1. Export model to ONNX
-2. Write `manifest.json`
-3. Upload both to HuggingFace with tag `stfu-compatible`
-4. (Optional) Publish `plugin.py` for custom parameters
+Community models are discovered via HuggingFace model search filtered by tag `stfu-compatible`. Download via `huggingface_hub.hf_hub_download()`.
 
 ---
 
@@ -252,59 +256,140 @@ Community models are discovered via HuggingFace model search filtered by tag `st
 | DirectML | `onnxruntime-directml` | Any DirectX 12 GPU (AMD, NVIDIA, Intel) |
 | CUDA | `onnxruntime-gpu` | NVIDIA (optional) |
 
-DirectML is the default GPU path on Windows. It requires no vendor SDK installation and works on AMD, NVIDIA, and Intel Arc GPUs.
-
 ### Per-plugin device selection
 
-Each plugin independently selects:
-- Backend: CPU / DirectML / CUDA
-- Device index: which GPU (for systems with multiple)
-
-This allows, for example:
-- NC on iGPU (GPU 1) while gaming on discrete GPU (GPU 0)
-- Voice changer on NVIDIA, EQ on CPU
-
-The UI exposes this per plugin card in Advanced mode.
+Each plugin independently selects backend and device index.
 
 ---
 
 ## 9. Virtual Audio Device Strategy
 
-### v1: Windows 11 APO + VB-Cable fallback
+### Why VB-Cable was in the original plan — and why it's gone
 
-**Windows 11 (22H2+):** Register STFU as an Audio Processing Object (APO) on the physical microphone. The processed audio is what all apps see — no virtual device needed, no driver required.
+**The routing problem:** Windows does not allow an app to intercept audio from another app and re-inject it to the same device in shared mode. For speaker NC to work, the audio flow must be broken in two:
 
-**Windows 10 / older Windows 11:** Bundle VB-Cable installer (silent install via PowerShell during setup). STFU writes processed audio to VB-Cable Input; apps select "VB-Cable Output" as their microphone.
+```
+App → [intercept point] → STFU → Physical Speakers
+```
 
-### v2: STFU Audio Device (WDM driver)
+VB-Cable creates that intercept point as a proprietary kernel driver (virtual device). STFU replaces this with two open-source alternatives:
 
-Goal: ship a fully open-source (MIT) WDM virtual audio driver as part of the STFU project — the first of its kind for this use case.
+---
 
-Based on Microsoft's `sysvad` WDK sample. Exposes:
-- "STFU Virtual Microphone" — capture device
-- "STFU Virtual Speaker" — render device
+### v1: STFU APO — Audio Processing Object (user mode, no kernel driver)
 
-Distribution signing path:
-1. **Development / open-source contributors:** `bcdedit /set testsigning on`
-2. **Release builds:** EV Code Signing Certificate (Sectigo ~$200-300/year, one cert covers all STFU drivers)
-3. **Long-term:** Microsoft WHQL certification (free, 2-6 weeks)
+An APO is a COM DLL that Windows loads **inside the audio engine process (audiodg.exe)**. The audio engine calls the APO synchronously on every audio block, before the audio reaches the application (for capture) or before it leaves to hardware (for render).
 
-One EV certificate covers OpenWinBlue's A2DP driver and STFU Audio Device simultaneously.
+**Why APO is better than VB-Cable for our use case:**
+- User mode — no kernel driver, no Windows signing headache, no reboot required
+- Transparent — Zoom selecting "Blue Snowball" automatically gets clean audio; user doesn't reconfigure apps
+- Applies to ALL apps simultaneously — not per-app
+- Works on Windows 10 and 11
+
+**What STFU APO is NOT:**
+- Not a virtual device (doesn't appear as "STFU Virtual Mic" in device list)
+- Not per-app (all apps on the same endpoint get the same processing)
+
+**Architecture:**
+
+```
+Windows audio engine (audiodg.exe)
+  → loads stfu_apo.dll via COM
+  → calls APO on each 10ms block
+
+stfu_apo.dll (C++, ~800 lines)
+  ├── implements IAudioSystemEffects3 (Windows 11) / IAudioSystemEffects2 (Win10)
+  ├── implements IAudioProcessingObjectRT (realtime audio processing)
+  └── named pipe client → \\.\pipe\stfu_apo_mic (or stfu_apo_spk)
+
+Python service (stfu/apo/)
+  └── named pipe server \\.\pipe\stfu_apo_mic
+      ├── receives float32 audio blocks from APO
+      ├── runs DeepFilterNet3 pipeline
+      └── writes processed audio back to APO
+```
+
+**Registration (Python setup code):**
+```python
+# stfu/apo/register.py
+import winreg, subprocess
+
+def register_apo_on_endpoint(endpoint_guid: str, apo_clsid: str, role: str):
+    """
+    role: "MFX_CAPTURE" (microphone) or "SFX_RENDER" (speaker)
+    Writes to HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\...
+    """
+    # 1. Register COM class
+    subprocess.run(["regsvr32", "/s", str(APO_DLL_PATH)])
+    # 2. Write FxProperties to endpoint registry key
+    key_path = f"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\{role}\\{{{endpoint_guid}}}\\FxProperties"
+    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path, access=winreg.KEY_SET_VALUE) as k:
+        # {d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6 = MFX GUID
+        winreg.SetValueEx(k, "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6", 0, winreg.REG_SZ, apo_clsid)
+    # 3. Cycle audio engine to pick up new APO
+    subprocess.run(["net", "stop", "audiosrv"], check=False)
+    subprocess.run(["net", "start", "audiosrv"], check=False)
+```
+
+**Limitations:**
+- Requires admin rights for registration (one-time setup)
+- APO is re-registered when user changes default audio device
+- Named pipe adds ~2ms latency (acceptable)
+
+---
+
+### v2: STFU Virtual Audio Device (WDM kernel driver)
+
+For advanced use cases:
+- Per-app routing ("process Discord but not Spotify")
+- "STFU Virtual Mic" appears as a selectable device in Zoom/Discord/OBS
+- Multiple virtual endpoints with independent processing chains
+
+**Technology stack:**
+- Windows Driver Kit (WDK) latest + Visual Studio 2022
+- PortCls / WaveRT miniport
+- Based on Microsoft's `sysvad` sample (in `microsoft/Windows-driver-samples`)
+- Reference: Synchronous Audio Router (SAR) — MIT, `amurzeau/SynchronousAudioRouter`
+
+**Exposes:**
+- "STFU Virtual Microphone" — capture endpoint, STFU Python writes NC'd audio
+- "STFU Virtual Speaker" — render endpoint, STFU Python reads and processes
+
+**Communication: shared memory + kernel events**
+```c
+// Kernel driver creates:
+\BaseNamedObjects\STFU_MicBridge    // HANDLE to shared memory section
+\BaseNamedObjects\STFU_MicReady     // kernel event: new audio available
+\BaseNamedObjects\STFU_MicConsumed  // kernel event: processed audio ready
+```
+
+Python service maps shared memory via `ctypes.windll.kernel32.OpenFileMappingW`.
+
+**Signing:**
+- Dev: `bcdedit /set testsigning on`
+- Release: EV Code Signing Certificate (Sectigo ~$200-300/year)
+- Long-term: WHQL certification (free, 2-6 weeks)
+
+One EV certificate covers both STFU Audio Device and OpenWinBlue A2DP simultaneously.
 
 ---
 
 ## 10. FastAPI Service API
 
 ```
-GET  /status                    → service health, current latency
+GET  /status                    → service health, current latency, APO status
 GET  /devices                   → enumerate audio devices (WASAPI)
 POST /pipeline/mic              → configure mic plugin chain
 POST /pipeline/speaker          → configure speaker plugin chain
+POST /pipeline/mic/stop         → stop mic pipeline
+POST /pipeline/speaker/stop     → stop speaker pipeline
+GET  /apo/status                → APO registration status per endpoint
+POST /apo/register              → register STFU APO on endpoint (requires admin)
+POST /apo/unregister            → unregister STFU APO from endpoint
 GET  /models                    → list installed models
 POST /models/install            → install from hub or local path
 DELETE /models/{id}             → uninstall
 GET  /plugins                   → list available plugin classes
-POST /plugins/{id}/config       → update plugin parameters
 GET  /backends                  → list available ONNX providers + devices
 WS   /ws/metering               → real-time audio levels + CPU/GPU stats
 ```
@@ -315,11 +400,18 @@ WS   /ws/metering               → real-time audio levels + CPU/GPU stats
 
 ### Modes
 
-**Simple** — Toggle per pipeline (mic / speaker), intensity slider, device selector, total latency display. Target: gamers, streamers.
+**Simple** — Toggle per pipeline (mic / speaker), intensity slider, device selector, total latency display.
 
-**Advanced** — Draggable plugin chain per pipeline. Each plugin card shows parameters, backend/device selector, latency contribution bar. Target: creators, podcasters.
+**Advanced** — Draggable plugin chain per pipeline. Each plugin card shows parameters, backend/device selector, latency contribution bar.
 
-**Hub** — Browse, install, and manage models. Shows installed models and HuggingFace community models. Supports local ONNX import. Target: power users.
+**Hub** — Browse, install, and manage models.
+
+### Simple UI behavior for speaker toggle
+
+Before APO is registered:
+- Speaker toggle shows "Requiere configuración inicial → [Configurar]" button
+- Clicking Configure calls `POST /apo/register` (requires admin, shows UAC prompt)
+- After registration, speaker toggle enables NC inline on the selected output device
 
 ### System tray
 
@@ -333,7 +425,7 @@ WS   /ws/metering               → real-time audio levels + CPU/GPU stats
 - React 19 + TypeScript
 - TanStack Query (API state management)
 - Tailwind CSS
-- WebSocket for real-time metering (audio levels, latency, GPU usage)
+- WebSocket for real-time metering
 
 ---
 
@@ -358,17 +450,35 @@ stfu/
 │   │   │   ├── manager.py          # Download, install, remove models
 │   │   │   └── registry.py         # Local model index
 │   │   ├── audio/
-│   │   │   ├── capture.py          # WASAPI capture thread
-│   │   │   ├── playback.py         # WASAPI playback thread
-│   │   │   └── devices.py          # Device enumeration
+│   │   │   ├── engine.py           # AudioEngine singleton
+│   │   │   ├── capture.py          # WASAPI capture+playback thread (test mode)
+│   │   │   └── devices.py          # Device enumeration (WASAPI-only filter)
+│   │   ├── apo/
+│   │   │   ├── pipe_server.py      # Named pipe server (receives audio from APO DLL)
+│   │   │   ├── register.py         # APO registration in Windows registry
+│   │   │   └── endpoint_finder.py  # Enumerate endpoints + find GUID
 │   │   ├── api/
 │   │   │   ├── routes/
 │   │   │   │   ├── pipeline.py
+│   │   │   │   ├── apo.py          # APO register/unregister/status
 │   │   │   │   ├── models.py
 │   │   │   │   └── devices.py
 │   │   │   └── ws.py               # WebSocket metering
 │   │   └── main.py                 # FastAPI app entrypoint
 │   └── requirements.txt
+├── apo/                            # STFU APO — C++ COM DLL (user mode)
+│   ├── src/
+│   │   ├── stfu_apo.cpp            # COM DLL entry + class factory
+│   │   ├── stfu_apo_mfx.cpp        # MFX APO (capture/mic processing)
+│   │   ├── stfu_apo_sfx.cpp        # SFX APO (render/speaker processing)
+│   │   ├── pipe_client.cpp         # Named pipe client to Python service
+│   │   └── stfu_apo.def            # Exports
+│   ├── include/
+│   │   ├── stfu_apo.h
+│   │   └── pipe_client.h
+│   └── CMakeLists.txt              # Build: cl.exe, MSVC, Windows SDK only
+├── driver/                         # STFU Virtual Audio Device (v2, WDM)
+│   └── stfu_audio/                 # Kernel driver (PortCls/WaveRT)
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
@@ -376,14 +486,8 @@ stfu/
 │   │   │   ├── Advanced.tsx
 │   │   │   └── Hub.tsx
 │   │   ├── components/
-│   │   │   ├── PluginCard.tsx
-│   │   │   ├── LevelMeter.tsx
-│   │   │   ├── BackendSelector.tsx
-│   │   │   └── LatencyBudget.tsx
 │   │   └── services/
 │   └── src-tauri/
-├── driver/                         # STFU Audio Device (v2)
-│   └── stfu_audio/
 ├── docs/
 │   └── superpowers/specs/
 │       └── 2026-06-19-stfu-design.md
@@ -398,7 +502,7 @@ stfu/
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `sounddevice` | ≥0.5 | WASAPI audio I/O |
+| `sounddevice` | ≥0.5 | WASAPI audio I/O (test mode + device enumeration) |
 | `onnxruntime-directml` | ≥1.20 | DirectML inference (AMD/Intel/NVIDIA) |
 | `onnxruntime` | ≥1.20 | CPU inference fallback |
 | `numpy` | ≥1.26 | Audio buffer handling |
@@ -406,20 +510,138 @@ stfu/
 | `fastapi` | ≥0.115 | REST API + WebSocket |
 | `huggingface_hub` | ≥0.24 | Model downloads |
 | `uvicorn` | ≥0.30 | ASGI server |
+| `pywin32` | ≥308 | Windows registry access for APO registration |
+
+**C++ (APO DLL):** Windows SDK only (audiomediatype.h, audioenginebaseapo.h). No WDK required.
 
 ---
 
-## 14. Research Findings Summary
+## 14. Development Roadmap
+
+### v1.0 (current sprint): Core pipeline + test mode
+- WASAPI capture → DeepFilterNet3 → WASAPI playback (mic → headphones, for testing)
+- Fix WASAPI format compatibility (stereo capture, native output rate)
+- Frontend Simple UI with mic toggle
+
+### v1.1: STFU APO (open-source speaker NC, production mic NC)
+- `apo/` C++ COM DLL (MFX + SFX APOs, ~800 lines C++)
+- `backend/stfu/apo/` Python named pipe server + registry registration
+- Backend `POST /apo/register` endpoint
+- Frontend: speaker toggle calls register if needed, then enables pipeline
+- One-time admin UAC prompt for registration
+
+### v1.2: WASAPI direct mode improvements
+- Auto-restart on device change
+- Latency optimization
+
+### v2.0: STFU Virtual Audio Device (WDM kernel driver)
+- Virtual capture + render endpoints
+- Per-app routing
+- WHQL certification path
+
+---
+
+## 15. STFU APO — Implementation Details
+
+### COM DLL structure
+
+`stfu_apo.dll` exports three functions (`stfu_apo.def`):
+```
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    DllRegisterServer    ; called by regsvr32
+    DllUnregisterServer
+```
+
+### MFX APO class (capture endpoint — mic NC)
+
+```cpp
+class CSTFUApoMfx :
+    public IAudioSystemEffects3,       // Windows 11 (falls back to IAudioSystemEffects2 on Win10)
+    public IAudioProcessingObject,
+    public IAudioProcessingObjectRT,   // realtime audio processing
+    public IAudioProcessingObjectConfiguration
+{
+    HRESULT STDMETHODCALLTYPE APOProcess(
+        UINT32 u32NumInputConnections,
+        APO_CONNECTION_PROPERTY** ppInputConnections,
+        UINT32 u32NumOutputConnections,
+        APO_CONNECTION_PROPERTY** ppOutputConnections) override
+    {
+        // 1. Extract float32 block from ppInputConnections[0]
+        // 2. Write to named pipe \\.\pipe\stfu_apo_mic
+        // 3. Read processed float32 block from named pipe
+        // 4. Write to ppOutputConnections[0]
+    }
+};
+```
+
+### Named pipe protocol (binary, fixed-size frames)
+
+```c
+// Request: APO → Python
+typedef struct {
+    uint32_t frame_id;          // monotonic counter
+    uint32_t sample_rate;       // e.g. 48000
+    uint32_t channels;          // e.g. 2
+    uint32_t num_samples;       // e.g. 480 (10ms @ 48kHz)
+    float    samples[];         // num_samples * channels float32
+} STFUApoRequest;
+
+// Response: Python → APO
+typedef struct {
+    uint32_t frame_id;          // must match request
+    uint32_t num_samples;
+    float    samples[];         // processed audio, same layout
+} STFUApoResponse;
+```
+
+Pipe mode: `PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE` (message-based, not stream-based).
+
+### Python pipe server (per-endpoint)
+
+```python
+# stfu/apo/pipe_server.py
+class ApoPipeServer:
+    def __init__(self, pipe_name: str, pipeline: Pipeline):
+        self._pipe_name = pipe_name       # e.g. r"\\.\pipe\stfu_apo_mic"
+        self._pipeline = pipeline
+
+    def run(self):
+        while True:
+            pipe = win32pipe.CreateNamedPipe(
+                self._pipe_name,
+                win32pipe.PIPE_ACCESS_DUPLEX,
+                win32pipe.PIPE_TYPE_MESSAGE | win32pipe.PIPE_READMODE_MESSAGE | win32pipe.PIPE_WAIT,
+                win32pipe.PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, None)
+            win32pipe.ConnectNamedPipe(pipe, None)
+            threading.Thread(target=self._handle_client, args=(pipe,)).start()
+
+    def _handle_client(self, pipe):
+        while True:
+            data = win32file.ReadFile(pipe, 65536)[1]
+            request = parse_request(data)
+            audio = np.frombuffer(request.samples, dtype=np.float32).reshape(
+                request.num_samples, request.channels)
+            processed = self._pipeline.process(audio)
+            win32file.WriteFile(pipe, build_response(request.frame_id, processed))
+```
+
+---
+
+## 16. Research Findings Summary
 
 From 103-agent deep research (2026-06-19):
 
-- **DeepFilterNet3** (arXiv 2305.08227, Interspeech 2023): RTF 0.19 on single CPU thread, 40ms algorithmic latency at 48kHz, PESQ 3.17. Best confirmed noise cancellation model for CPU-viable real-time use. Written in Rust with Python/ONNX bindings.
-- **StreamVC** (arXiv 2401.03078, ICASSP 2024): 70.8ms end-to-end on CPU. Viable path for future real-time voice conversion without GPU.
-- **Seed-VC** (GitHub Plachtaa/seed-vc): 25M–200M param family. Real-time path (430ms) requires RTX 3060+. Zero-shot voice cloning capability for v2.
-- **SynthVC** (arXiv 2510.09245, Oct 2025): Eliminates ASR at inference, 14.7M params base. Promising direction for CPU-viable voice conversion.
-- **VCClient** (w-okada/voice-changer): Reference implementation for full voice conversion pipeline. Two-mode architecture (browser-mediated vs WASAPI-direct) validates our thread model.
-- **ONNX Runtime DirectML**: Confirmed viable for Windows multi-GPU audio inference via `onnxruntime-directml`.
+- **DeepFilterNet3** (arXiv 2305.08227): RTF 0.19 on single CPU thread, 40ms algorithmic latency at 48kHz, PESQ 3.17. Best confirmed NC model for CPU-viable real-time use.
+- **StreamVC** (arXiv 2401.03078): 70.8ms end-to-end on CPU. v2 path for voice conversion.
+- **Seed-VC** (GitHub Plachtaa/seed-vc): 25M–200M params. Real-time requires RTX 3060+.
+- **ONNX Runtime DirectML**: Confirmed viable for Windows multi-GPU audio inference.
+- **Windows APO CAPX APIs**: Windows 11 build 22000+ provides IAudioSystemEffects3, AEC framework with automatic reference stream, Settings/Notifications/Threading frameworks. Windows 10 uses IAudioSystemEffects2.
+- **Reference APO implementations**: `microsoft/Windows-driver-samples/audio/sysvad/APO/` (includes full AEC APO sample). Equalizer APO (open source, MIT) is a production APO proving the approach is sound.
+- **SAR (Synchronous Audio Router)**: MIT license, `amurzeau/SynchronousAudioRouter` (active fork 2024). Kernel-mode WDM driver creating virtual endpoints synchronized to ASIO. Reference for v2 virtual device.
 
 ---
 
-*Spec reviewed and approved by user — 2026-06-19*
+*Spec revised 2026-06-20 — VB-Cable removed, STFU APO (user-mode COM) introduced for v1.1, WDM virtual device deferred to v2*
