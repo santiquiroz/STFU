@@ -14,16 +14,43 @@ export interface DeviceInfo {
 export interface StatusResponse {
   status: string;
   latency_ms: number;
+  active: string[];
+}
+
+export interface PluginConfig {
+  plugin_id: string;
+  parameters?: Record<string, number | string | boolean>;
+}
+
+export interface PipelineRequest {
+  plugins: PluginConfig[];
+  input_device_id: number;
+  output_device_id: number;
+}
+
+export interface PipelineResponse {
+  ok: boolean;
+  target: string;
+  active: boolean;
+  latency_ms?: number;
 }
 
 export const api = {
   getStatus: (): Promise<StatusResponse> =>
     client.get("/status").then((r) => r.data),
+
   getDevices: (): Promise<DeviceInfo[]> =>
     client.get("/devices").then((r) => r.data),
-  configurePipeline: (
+
+  startPipeline: (
     target: "mic" | "speaker",
-    config: object,
-  ): Promise<void> =>
-    client.post(`/pipeline/${target}`, config).then((r) => r.data),
+    req: PipelineRequest,
+  ): Promise<PipelineResponse> =>
+    client.post(`/pipeline/${target}`, req).then((r) => r.data),
+
+  stopPipeline: (target: "mic" | "speaker"): Promise<PipelineResponse> =>
+    client.delete(`/pipeline/${target}`).then((r) => r.data),
+
+  getActivePipelines: (): Promise<{ active: string[] }> =>
+    client.get("/pipeline/active").then((r) => r.data),
 };
