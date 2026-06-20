@@ -1,5 +1,5 @@
 sounddevice>=0.5.0
-numpy>=1.26.0
+numpy>=1.26.0,<2.0.0
 scipy>=1.13.0
 deepfilternet>=0.5.6
 onnxruntime-directml>=1.20.0
