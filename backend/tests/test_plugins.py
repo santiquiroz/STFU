@@ -60,3 +60,37 @@ def test_parameter_defaults():
 def test_plugin_cannot_be_instantiated_directly():
     with pytest.raises(TypeError):
         AudioPlugin()
+
+
+from stfu.plugins.builtin.deepfilternet3 import DeepFilterNet3Plugin
+
+
+def test_dfn3_preferred_format():
+    p = DeepFilterNet3Plugin()
+    assert p.preferred_format == AudioFormat(48000, 1, 960)
+
+
+def test_dfn3_setup_process_teardown():
+    p = DeepFilterNet3Plugin()
+    fmt = p.preferred_format
+    out_fmt = p.setup(fmt)
+    assert out_fmt == fmt
+    audio = np.zeros((960, 1), dtype=np.float32)
+    result = p.process(audio)
+    assert result.shape == (960, 1)
+    assert result.dtype == np.float32
+    p.teardown()
+
+
+def test_dfn3_strength_parameter():
+    p = DeepFilterNet3Plugin()
+    params = {x.id: x for x in p.parameters}
+    assert "strength" in params
+    assert params["strength"].type == "float"
+    assert params["strength"].default == pytest.approx(0.85)
+    assert params["strength"].min == 0.0
+    assert params["strength"].max == 1.0
+
+
+def test_dfn3_latency():
+    assert DeepFilterNet3Plugin().algorithmic_latency_ms == pytest.approx(40.0)
