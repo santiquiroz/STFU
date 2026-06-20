@@ -13,7 +13,9 @@ _PLUGIN_CLASSES = {
     "gain": GainPlugin,
 }
 
-_CAPTURE_FORMAT = AudioFormat(sample_rate=48000, channels=1, chunk_samples=960)
+# Stereo capture: WASAPI shared mode rejects mono on most devices.
+# FormatAdapter handles stereo→mono conversion before plugins that need mono.
+_CAPTURE_FORMAT = AudioFormat(sample_rate=48000, channels=2, chunk_samples=960)
 
 
 def _out_channels_for_device(device_id: int) -> int:
