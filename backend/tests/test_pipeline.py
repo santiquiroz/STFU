@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from unittest.mock import patch, PropertyMock
 from stfu.core.audio_format import AudioFormat
 from stfu.core.pipeline import Pipeline
 from stfu.plugins.base import AudioPlugin, Parameter
@@ -69,3 +70,21 @@ def test_clear_resets_to_passthrough():
     p.clear()
     audio = np.ones((960, 1), dtype=np.float32)
     np.testing.assert_array_equal(p.process(audio), audio)
+
+def test_pipeline_returns_correct_shape_when_adapter_buffers():
+    # Input: 480 stereo samples. Plugin wants: 960 mono samples.
+    # After one 480-sample block, adapter has 480 samples < 960 → yields nothing.
+    fmt_in = AudioFormat(48000, 2, 480)
+    fmt_out = AudioFormat(48000, 1, 960)
+
+    gain = _GainPlugin()
+    pipeline = Pipeline()
+    pipeline.add_plugin(gain)
+
+    with patch.object(type(gain), "preferred_format", new_callable=PropertyMock, return_value=fmt_out):
+        pipeline.compile(fmt_in)
+        audio = np.zeros((480, 2), dtype=np.float32)
+        result = pipeline.process(audio)
+
+    assert result.shape == (960, 1), f"Expected (960, 1), got {result.shape}"
+    assert result.dtype == np.float32
