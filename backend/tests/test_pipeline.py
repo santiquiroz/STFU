@@ -53,6 +53,7 @@ def test_adapter_inserted_for_format_mismatch():
     audio = np.ones((960, 1), dtype=np.float32)
     result = p.process(audio)
     assert result is not None
+    assert result.dtype == np.float32  # format preserved through pipeline
 
 def test_total_latency_sums_all():
     p = Pipeline()

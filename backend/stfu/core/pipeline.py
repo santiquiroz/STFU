@@ -39,7 +39,7 @@ class Pipeline:
             if adapter is not None:
                 chunks = list(adapter.convert(chunk))
                 if not chunks:
-                    return chunk
+                    return np.zeros_like(chunk)
                 chunk = chunks[0]
             chunk = plugin.process(chunk)
         return chunk
