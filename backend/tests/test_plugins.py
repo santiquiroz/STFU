@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from typing import Any
 from stfu.core.audio_format import AudioFormat
 from stfu.plugins.base import AudioPlugin, Parameter
 
@@ -28,7 +29,7 @@ class _PassthroughPlugin(AudioPlugin):
     def parameters(self) -> list[Parameter]:
         return [Parameter(id="vol", label="Volume", type="float", default=1.0)]
 
-    def set_parameter(self, id: str, value) -> None:
+    def set_parameter(self, id: str, value: Any) -> None:
         pass
 
 def test_plugin_name_and_version():
