@@ -9,7 +9,7 @@ _APO_DLL = Path(__file__).parent.parent.parent.parent / "apo" / "build" / "stfu_
 
 
 def _fx_props_path(endpoint_guid: str, flow: str) -> str:
-    return f"{_flow_key(flow)}\\{{{endpoint_guid}}}\\FxProperties"
+    return f"{_flow_key(flow)}\\{endpoint_guid}\\FxProperties"
 
 
 def _clsid_prop(flow: str) -> str:
@@ -31,15 +31,18 @@ def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
 def unregister_apo(endpoint_guid: str, flow: str) -> None:
     """Remove STFU APO from endpoint. Requires admin rights."""
     path = _fx_props_path(endpoint_guid, flow)
+    deleted = False
     try:
         with winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE, path, 0,
             winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY,
         ) as k:
             winreg.DeleteValue(k, _clsid_prop(flow))
+            deleted = True
     except FileNotFoundError:
         pass
-    _restart_audio_service()
+    if deleted:
+        _restart_audio_service()
 
 
 def get_apo_status(endpoint_guid: str, flow: str) -> dict:

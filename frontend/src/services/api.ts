@@ -46,6 +46,8 @@ export interface ApoRegisterRequest {
   apo_clsid: string;
 }
 
+// TODO(tasks-4-5): Replace with actual CLSIDs from apo/src/guids.h once C++ DLL is built.
+// These must match DllRegisterServer's HKCR entries exactly.
 export const STFU_APO_MFX_CLSID = "{C0FFEE01-AB12-4A00-BF00-000000000001}";
 export const STFU_APO_SFX_CLSID = "{C0FFEE02-AB12-4A00-BF00-000000000002}";
 

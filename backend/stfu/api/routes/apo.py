@@ -1,3 +1,5 @@
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from stfu.apo.endpoint_finder import find_endpoint_guid
@@ -7,7 +9,7 @@ router = APIRouter(prefix="/apo", tags=["apo"])
 
 
 class ApoRegisterRequest(BaseModel):
-    flow: str           # "Capture" or "Render"
+    flow: Literal["Capture", "Render"]
     device_name: str    # substring match
     apo_clsid: str      # e.g. "{XXXXXXXX-...}"
 
@@ -20,7 +22,7 @@ def _resolve_guid(device_name: str, flow: str) -> str:
 
 
 @router.get("/status/{flow}")
-def apo_status(flow: str, device_name: str):
+def apo_status(flow: Literal["Capture", "Render"], device_name: str):
     guid = _resolve_guid(device_name, flow)
     return get_apo_status(guid, flow)
 
@@ -36,7 +38,7 @@ def apo_register(req: ApoRegisterRequest):
 
 
 @router.delete("/register/{flow}")
-def apo_unregister(flow: str, device_name: str):
+def apo_unregister(flow: Literal["Capture", "Render"], device_name: str):
     guid = _resolve_guid(device_name, flow)
     try:
         unregister_apo(guid, flow)

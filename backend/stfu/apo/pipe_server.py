@@ -1,5 +1,6 @@
 """APO named pipe server that bridges the APO COM DLL to the Python pipeline."""
 
+import logging
 import struct
 import threading
 import time
@@ -13,6 +14,8 @@ try:
     _WIN32_AVAILABLE = True
 except ImportError:
     _WIN32_AVAILABLE = False
+
+_log = logging.getLogger(__name__)
 
 _HDR_FMT = "<IIII"   # frame_id, sample_rate, channels, num_samples
 _HDR_SIZE = struct.calcsize(_HDR_FMT)
@@ -89,6 +92,7 @@ class ApoPipeServer:
                 win32pipe.ConnectNamedPipe(pipe, None)
                 threading.Thread(target=self._handle_client, args=(pipe,), daemon=True).start()
             except pywintypes.error:
+                _log.exception("pipe accept error")
                 if pipe is not None:
                     win32file.CloseHandle(pipe)
 
