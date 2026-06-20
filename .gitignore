@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Models (large files, downloaded at runtime)
+backend/stfu/models/
+*.onnx
+*.pt
+*.pth
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+
+# Tauri
+frontend/src-tauri/target/
+
+# Rust
+target/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+
+# Env
+.env
+.env.local
+*.env
+
+# Logs
+*.log
+logs/
+
+# Windows Driver Kit build output
+driver/**/*.sys
+driver/**/*.pdb
+driver/**/x64/
