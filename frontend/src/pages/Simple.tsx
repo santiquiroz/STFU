@@ -5,6 +5,7 @@ import {
   useStartPipeline,
   useStopPipeline,
 } from "../hooks/usePipeline";
+import { api, ApoRegisterRequest, STFU_APO_SFX_CLSID } from "../services/api";
 
 function Toggle({
   on,
@@ -87,6 +88,14 @@ export function Simple() {
     };
   }
 
+  function extractError(e: unknown): string {
+    if (e && typeof e === "object" && "response" in e) {
+      const resp = (e as { response?: { data?: { detail?: string } } }).response;
+      if (resp?.data?.detail) return resp.data.detail;
+    }
+    return e instanceof Error ? e.message : String(e);
+  }
+
   async function handleMicToggle(next: boolean) {
     setMicError(null);
     if (next) {
@@ -95,8 +104,7 @@ export function Simple() {
         await startMic.mutateAsync(buildMicRequest(strength));
       } catch (e: unknown) {
         setMicOn(false);
-        const msg = e instanceof Error ? e.message : String(e);
-        setMicError(msg);
+        setMicError(extractError(e));
       }
     } else {
       setMicOn(false);
@@ -104,16 +112,39 @@ export function Simple() {
     }
   }
 
+  async function ensureApoRegistered(deviceName: string): Promise<void> {
+    const apoStatus = await api.getApoStatus("Render", deviceName);
+    if (apoStatus.registered) return;
+    setSpeakerError(
+      "Primera vez: requiere permisos de administrador para instalar STFU APO. " +
+        "Se abrirá UAC — acepta para continuar.",
+    );
+    const req: ApoRegisterRequest = {
+      flow: "Render",
+      device_name: deviceName,
+      apo_clsid: STFU_APO_SFX_CLSID,
+    };
+    await api.registerApo(req);
+    setSpeakerError(null);
+  }
+
   async function handleSpeakerToggle(next: boolean) {
     setSpeakerError(null);
     if (next) {
+      const outputDevice = outputs.find((d) => d.id === effectiveOutput);
+      if (!outputDevice) return;
+      try {
+        await ensureApoRegistered(outputDevice.name);
+      } catch (e) {
+        setSpeakerError(extractError(e));
+        return;
+      }
       setSpeakerOn(true);
       try {
         await startSpeaker.mutateAsync(buildSpeakerRequest(strength));
-      } catch (e: unknown) {
+      } catch (e) {
         setSpeakerOn(false);
-        const msg = e instanceof Error ? e.message : String(e);
-        setSpeakerError(msg);
+        setSpeakerError(extractError(e));
       }
     } else {
       setSpeakerOn(false);

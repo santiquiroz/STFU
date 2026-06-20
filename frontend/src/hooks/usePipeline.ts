@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, PipelineRequest } from "../services/api";
+import { api, ApoRegisterRequest, PipelineRequest } from "../services/api";
 
 export function usePipelineStatus() {
   return useQuery({
@@ -36,5 +36,23 @@ export function useStopPipeline(target: "mic" | "speaker") {
       queryClient.invalidateQueries({ queryKey: ["status"] });
       queryClient.invalidateQueries({ queryKey: ["pipeline/active"] });
     },
+  });
+}
+
+export function useApoStatus(flow: string, deviceName: string) {
+  return useQuery({
+    queryKey: ["apo/status", flow, deviceName],
+    queryFn: () => api.getApoStatus(flow, deviceName),
+    enabled: !!deviceName,
+    refetchInterval: 5000,
+  });
+}
+
+export function useApoRegister() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (req: ApoRegisterRequest) => api.registerApo(req),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["apo/status"] }),
   });
 }

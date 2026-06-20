@@ -35,6 +35,20 @@ export interface PipelineResponse {
   latency_ms?: number;
 }
 
+export interface ApoStatus {
+  registered: boolean;
+  clsid: string | null;
+}
+
+export interface ApoRegisterRequest {
+  flow: "Capture" | "Render";
+  device_name: string;
+  apo_clsid: string;
+}
+
+export const STFU_APO_MFX_CLSID = "{C0FFEE01-AB12-4A00-BF00-000000000001}";
+export const STFU_APO_SFX_CLSID = "{C0FFEE02-AB12-4A00-BF00-000000000002}";
+
 export const api = {
   getStatus: (): Promise<StatusResponse> =>
     client.get("/status").then((r) => r.data),
@@ -53,4 +67,20 @@ export const api = {
 
   getActivePipelines: (): Promise<{ active: string[] }> =>
     client.get("/pipeline/active").then((r) => r.data),
+
+  getApoStatus: (flow: string, deviceName: string): Promise<ApoStatus> =>
+    client
+      .get(`/apo/status/${flow}`, { params: { device_name: deviceName } })
+      .then((r) => r.data),
+
+  registerApo: (req: ApoRegisterRequest): Promise<{ ok: boolean }> =>
+    client.post("/apo/register", req).then((r) => r.data),
+
+  unregisterApo: (
+    flow: string,
+    deviceName: string,
+  ): Promise<{ ok: boolean }> =>
+    client
+      .delete(`/apo/register/${flow}`, { params: { device_name: deviceName } })
+      .then((r) => r.data),
 };
