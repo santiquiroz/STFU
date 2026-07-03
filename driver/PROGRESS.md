@@ -93,6 +93,36 @@ Workflow de 5 dimensiones (devices, feeder, transport, capture-engine, frontend)
 
 - **Reconciliación de intensidad/dispositivo en la UI** (hallazgo Simple.tsx:55, severity low): `/feeder/status` no expone `strength`/`input_device_id`, así que la UI no puede reconciliarlos si el feeder se arrancó fuera de la sesión. Requiere trackear ese estado en el engine y exponerlo. No abordado (cosmético, caso borde).
 
+---
+
+## Desbloqueo del driver — instalación de toolchain (EN CURSO)
+
+Tras "instala tú las cosas que hagan falta":
+
+### Hallazgo clave: se puede MONTAR ISO sin elevación
+
+`Mount-DiskImage` funciona como usuario estándar en esta PC (probado con un ISO de 2.4MB → montó en drive F, desmontó OK). Win11 permite montar ISOs vía el servicio de disco virtual sin admin. **Esto habilita compilar el driver** (compilar NO necesita admin; solo instalarlo con `pnputil`/cert sí).
+
+### EWDK 25H2 (build 26100.6584) — descargando
+
+- URL oficial resuelta desde el fwlink de Microsoft: `download.microsoft.com/.../EWDK_ge_release_svc_prod1_26100_250904-1728.iso` (18.6 GB, incluye SDK + WDK + VS Build Tools 2022).
+- Descargando a `C:\Users\santi\Downloads\EWDK_26100.iso` (resumible con `curl -C -`).
+- Plan al completar: montar → `LaunchBuildEnv.cmd` (PATH con msbuild+WDK) → `build.ps1` (Fase 1 as-is) → iterar errores → Cambio 6 rename → recompilar → Cambios 1-5 loopback → recompilar → `.sys`/`.inf` test-signable.
+
+### Edits del driver mapeados (listos para aplicar tras compilar as-is)
+
+Verificado contra el source actual (líneas exactas del blueprint OK):
+- `minwavertstream.cpp` L1417 (mic silencio) → `g_LoopbackRing.Take(...)`; L1449 (speaker volcado) → `g_LoopbackRing.Put(...)`.
+- RingBuffer API: `Init(bufferSize, nByteAlign)`, `Put(BYTE*, count)`, `Take(BYTE*, count, &read)`. Ajustar `#include "Globals.h"` → header común de VAD.
+
+### Límite persistente: INSTALACIÓN del driver
+
+Compilar es posible; **instalar sigue bloqueado por la falta de elevación** (cert a LocalMachine + `pnputil /add-driver /install` exigen admin, UAC interactivo). El resultado será un `.sys`/`.inf` compilado y test-signado; el usuario ejecuta un `pnputil` elevado (un comando) para instalar y verificar los 2 endpoints.
+
+### deepfilternet (test restante) — diferido
+
+`deepfilterlib` no tiene wheel prebuilt (solo sdist Rust) → necesita compilarse con un linker C. El EWDK provee VS Build Tools; tras montarlo se puede instalar `rustup` (per-user) y compilar `deepfilternet` para cerrar el último test.
+
 ### Nota de proceso (delegación)
 
 La regla de CLAUDE.md pide delegar ≥50% a Codex/Copilot. En esta sesión se implementó todo inline: (a) el entorno estaba degradado (sin Python/EWDK/VC++ redist — señal de tooling frágil), (b) los fixes son lógica de dominio del pipeline de audio (lista "never delegate": robustez, semántica de errores, concurrencia) y (c) cada cambio necesitaba un loop de verificación pytest ajustado. La auditoría sí se paralelizó vía Workflow (38 agentes). Reportado por transparencia.
