@@ -1,3 +1,4 @@
+import logging
 import queue
 import time
 import numpy as np
@@ -5,47 +6,30 @@ import sounddevice as sd
 from stfu.core.audio_format import AudioFormat
 from stfu.core.pipeline import Pipeline
 
+_log = logging.getLogger(__name__)
+
 _OUTPUT_QUEUE_SIZE = 8
+_PREFILL_CHUNKS = 2
 
 
-def _query_device_rate(device_id: int, fallback: int) -> int:
+def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
+    """AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM: Windows resamplea cualquier
+    dispositivo al formato canónico del engine (requiere sounddevice >= 0.4.7)."""
+    if not hasattr(sd, "WasapiSettings"):
+        return None
     try:
-        return int(sd.query_devices(device_id)["default_samplerate"])
+        return sd.WasapiSettings(auto_convert=True)
     except Exception:
-        return fallback
-
-
-def _upsample_nearest(audio: np.ndarray, factor: int) -> np.ndarray:
-    """Nearest-neighbour upsampling — no allocations beyond the output buffer."""
-    return np.repeat(audio, factor, axis=0)
-
-
-def _downsample_decimate(audio: np.ndarray, factor: int) -> np.ndarray:
-    """Integer decimation — takes every Nth sample."""
-    return audio[::factor].copy()
-
-
-def _resample(audio: np.ndarray, in_rate: int, out_rate: int) -> np.ndarray:
-    if in_rate == out_rate:
-        return audio
-    if out_rate > in_rate and out_rate % in_rate == 0:
-        return _upsample_nearest(audio, out_rate // in_rate)
-    if in_rate > out_rate and in_rate % out_rate == 0:
-        return _downsample_decimate(audio, in_rate // out_rate)
-    # Non-integer ratio: use scipy polyphase resampler.
-    from math import gcd
-    from scipy.signal import resample_poly
-    g = gcd(in_rate, out_rate)
-    return resample_poly(audio, out_rate // g, in_rate // g, axis=0).astype(np.float32)
+        return None
 
 
 class CaptureThread:
     """Captures audio from input device, runs pipeline, plays back on output device.
 
-    Opens InputStream at the device's native format (stereo WASAPI shared mode).
-    Opens OutputStream at the output device's native sample rate so WASAPI accepts it.
-    Resamples processed audio (pipeline output rate → output device rate) before queuing.
-    If the output stream fails to open, processing continues without playback.
+    Both streams open at the engine's canonical format; WASAPI auto-convert
+    performs SRC for devices with different native rates (192kHz mic, 44.1kHz
+    output, etc). If the output stream fails to open, processing continues
+    without playback and playback_active reports False.
     """
 
     def __init__(
@@ -65,41 +49,45 @@ class CaptureThread:
         self._output_stream: sd.OutputStream | None = None
         self._queue: queue.Queue = queue.Queue(maxsize=_OUTPUT_QUEUE_SIZE)
         self._latency_ms: float = 0.0
-        self._out_rate: int = fmt.sample_rate
+        self._input_overflows: int = 0
+        self._output_underflows: int = 0
+        self._queue_drops: int = 0
 
     def start(self) -> None:
         self._pipeline.compile(self._fmt)
-
-        # Query output device native rate so WASAPI accepts the format.
-        self._out_rate = _query_device_rate(self._out, self._fmt.sample_rate)
-        # blocksize proportional to input blocksize so latency stays consistent.
-        out_blocksize = max(
-            1,
-            round(self._fmt.chunk_samples * self._out_rate / self._fmt.sample_rate),
-        )
+        self._prefill_queue()
 
         try:
             self._output_stream = sd.OutputStream(
                 device=self._out,
-                samplerate=self._out_rate,
+                samplerate=self._fmt.sample_rate,
                 channels=self._out_channels,
                 dtype=self._fmt.dtype,
-                blocksize=out_blocksize,
+                blocksize=self._fmt.chunk_samples,
+                latency="low",
+                extra_settings=_wasapi_auto_convert(),
                 callback=self._output_callback,
             )
             self._output_stream.start()
         except sd.PortAudioError:
+            _log.warning("output stream failed to open (device %s); playback disabled", self._out, exc_info=True)
             self._output_stream = None
 
-        self._input_stream = sd.InputStream(
-            device=self._in,
-            samplerate=self._fmt.sample_rate,
-            channels=self._fmt.channels,
-            dtype=self._fmt.dtype,
-            blocksize=self._fmt.chunk_samples,
-            callback=self._input_callback,
-        )
-        self._input_stream.start()
+        try:
+            self._input_stream = sd.InputStream(
+                device=self._in,
+                samplerate=self._fmt.sample_rate,
+                channels=self._fmt.channels,
+                dtype=self._fmt.dtype,
+                blocksize=self._fmt.chunk_samples,
+                latency="low",
+                extra_settings=_wasapi_auto_convert(),
+                callback=self._input_callback,
+            )
+            self._input_stream.start()
+        except Exception:
+            self.stop()
+            raise
 
     def stop(self) -> None:
         if self._input_stream:
@@ -111,36 +99,58 @@ class CaptureThread:
             self._output_stream.close()
             self._output_stream = None
 
+    def _prefill_queue(self) -> None:
+        silence = np.zeros((self._fmt.chunk_samples, self._out_channels), dtype=np.float32)
+        for _ in range(_PREFILL_CHUNKS):
+            self._queue.put_nowait(silence.copy())
+
     def _input_callback(
         self, indata: np.ndarray, frames: int, time_info, status
     ) -> None:
+        if status and status.input_overflow:
+            self._input_overflows += 1
         t0 = time.perf_counter()
         processed = self._pipeline.process(indata.copy())
         if self._output_stream is not None:
-            resampled = _resample(processed, self._fmt.sample_rate, self._out_rate)
             try:
-                self._queue.put_nowait(resampled)
+                self._queue.put_nowait(processed)
             except queue.Full:
-                pass
+                self._queue_drops += 1
         self._latency_ms = (time.perf_counter() - t0) * 1000.0
 
     def _output_callback(
         self, outdata: np.ndarray, frames: int, time_info, status
     ) -> None:
+        if status and status.output_underflow:
+            self._output_underflows += 1
         try:
             audio = self._queue.get_nowait()
             _write_to_output(audio, outdata)
         except queue.Empty:
+            self._output_underflows += 1
             outdata[:] = 0
 
     @property
     def measured_latency_ms(self) -> float:
         return self._latency_ms
 
+    @property
+    def playback_active(self) -> bool:
+        return self._output_stream is not None
+
+    @property
+    def stats(self) -> dict:
+        return {
+            "playback_active": self.playback_active,
+            "input_overflows": self._input_overflows,
+            "output_underflows": self._output_underflows,
+            "queue_drops": self._queue_drops,
+            "queue_fill": self._queue.qsize(),
+        }
+
 
 def _write_to_output(processed: np.ndarray, outdata: np.ndarray) -> None:
     out_ch = outdata.shape[1]
-    proc_ch = processed.shape[1]
     # Trim or pad to expected frame count (may differ by ±1 due to rounding).
     n = min(processed.shape[0], outdata.shape[0])
     outdata[:n] = _adjust_channels(processed[:n], out_ch)

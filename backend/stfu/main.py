@@ -19,7 +19,13 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="STFU Audio Service", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:1420", "tauri://localhost", "https://tauri.localhost"],
+    allow_origins=[
+        "http://localhost:1420",
+        "tauri://localhost",
+        # Tauri 2 en Windows sirve http://tauri.localhost por defecto (useHttpsScheme=false)
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -36,6 +42,7 @@ def status():
         "status": "ok",
         "latency_ms": engine.get_latency_ms(),
         "active": engine.active_targets(),
+        "streams": engine.get_stats(),
     }
 
 

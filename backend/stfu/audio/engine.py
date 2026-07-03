@@ -51,18 +51,22 @@ class AudioEngine:
         output_device_id: int,
         plugin_configs: list[dict],
     ) -> float:
-        self.stop(target)
-        pipeline = _build_pipeline(plugin_configs)
-        out_ch = _out_channels_for_device(output_device_id)
-        thread = CaptureThread(
-            input_device_id=input_device_id,
-            output_device_id=output_device_id,
-            fmt=_CAPTURE_FORMAT,
-            pipeline=pipeline,
-            out_channels=out_ch,
-        )
-        thread.start()
+        # Toda la secuencia stop→build→start→register bajo el lock: dos POST
+        # concurrentes al mismo target no pueden filtrar un thread huérfano.
         with self._lock:
+            old = self._threads.pop(target, None)
+            if old:
+                old.stop()
+            pipeline = _build_pipeline(plugin_configs)
+            out_ch = _out_channels_for_device(output_device_id)
+            thread = CaptureThread(
+                input_device_id=input_device_id,
+                output_device_id=output_device_id,
+                fmt=_CAPTURE_FORMAT,
+                pipeline=pipeline,
+                out_channels=out_ch,
+            )
+            thread.start()
             self._threads[target] = thread
         return pipeline.total_latency_ms()
 
@@ -89,6 +93,11 @@ class AudioEngine:
     def active_targets(self) -> list[str]:
         with self._lock:
             return list(self._threads.keys())
+
+    def get_stats(self) -> dict[str, dict]:
+        with self._lock:
+            threads = dict(self._threads)
+        return {target: t.stats for target, t in threads.items()}
 
 
 engine = AudioEngine()
