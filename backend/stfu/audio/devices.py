@@ -1,6 +1,10 @@
 from dataclasses import dataclass
 import sounddevice as sd
 
+# Nombre del endpoint render del driver virtual (v2) donde el feeder escribe el
+# audio limpio. El driver lo enruta a "STFU Microphone" que las apps eligen.
+BRIDGE_RENDER_NAME = "STFU Audio Bridge"
+
 
 @dataclass
 class DeviceInfo:
@@ -66,3 +70,16 @@ def get_default_output() -> DeviceInfo:
         next((d for d in devices if d.is_default_output), None)
         or next(d for d in devices if d.channels_out > 0)
     )
+
+
+def find_output_by_name(substring: str) -> DeviceInfo | None:
+    sub = substring.lower()
+    return next(
+        (d for d in list_devices() if d.channels_out > 0 and sub in d.name.lower()),
+        None,
+    )
+
+
+def find_bridge_output() -> DeviceInfo | None:
+    """El render endpoint del driver virtual STFU, si está instalado."""
+    return find_output_by_name(BRIDGE_RENDER_NAME)

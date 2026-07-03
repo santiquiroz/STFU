@@ -9,6 +9,7 @@ from stfu.api.routes.pipeline import router as pipeline_router
 from stfu.api.routes.models import router as models_router
 from stfu.api.routes.backends import router as backends_router
 from stfu.api.routes.apo import router as apo_router
+from stfu.api.routes.feeder import router as feeder_router
 from stfu.api.ws import metering_ws
 from stfu.audio.engine import engine
 
@@ -39,6 +40,7 @@ app.include_router(pipeline_router)
 app.include_router(models_router)
 app.include_router(backends_router)
 app.include_router(apo_router)
+app.include_router(feeder_router)
 
 
 @app.get("/status")
