@@ -50,3 +50,5 @@ logs/
 driver/**/*.sys
 driver/**/*.pdb
 driver/**/x64/
+
+apo/build/

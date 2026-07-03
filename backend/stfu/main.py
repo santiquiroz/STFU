@@ -14,6 +14,8 @@ from stfu.audio.engine import engine
 async def lifespan(app: FastAPI):
     yield
     engine.stop_all()
+    from stfu.apo.apo_engine import apo_engine
+    apo_engine.stop_all()
 
 
 app = FastAPI(title="STFU Audio Service", version="0.1.0", lifespan=lifespan)

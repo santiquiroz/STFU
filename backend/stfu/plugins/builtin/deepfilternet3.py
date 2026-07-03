@@ -34,8 +34,9 @@ class DeepFilterNet3Plugin(AudioPlugin):
         return AudioFormat(sample_rate=48000, channels=1, chunk_samples=_CHUNK)
 
     def setup(self, fmt: AudioFormat) -> AudioFormat:
-        from df.enhance import init_df
-        self._model, self._df_state, _ = init_df()
+        if self._model is None:
+            from df.enhance import init_df
+            self._model, self._df_state, _ = init_df()
         self._reset_window()
         return fmt
 
