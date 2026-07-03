@@ -91,35 +91,54 @@ def _backup_key(endpoint_guid: str, flow: str) -> str:
     return f"{endpoint_guid}|{flow}"
 
 
-def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
-    """Register stfu_apo.dll on the endpoint. Requires admin rights.
+def _read_effect_list(path: str, prop: str) -> list[str]:
+    """Lee la lista de CLSID de APOs (REG_MULTI_SZ) del endpoint."""
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, path, 0,
+            winreg.KEY_QUERY_VALUE | winreg.KEY_WOW64_64KEY,
+        ) as k:
+            val, typ = winreg.QueryValueEx(k, prop)
+            if typ == winreg.REG_MULTI_SZ:
+                return [c for c in val if c]
+            if isinstance(val, str) and val:
+                return [val]
+    except (FileNotFoundError, OSError):
+        pass
+    return []
 
-    Guarda el CLSID previo del endpoint (si existía) para poder restaurarlo:
-    sobrescribir FxProperties sin backup puede dejar sin efectos el APO del
-    fabricante del dispositivo.
+
+def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
+    """Añade stfu_apo.dll a la cadena de efectos del endpoint. Requiere admin.
+
+    Windows 10/11 lee PKEY_CompositeFX como REG_MULTI_SZ (lista de CLSIDs). Se
+    ANTEPONE el nuestro preservando los del fabricante, con backup para restaurar.
     """
     dll = _stage_apo_dll()
     _run_quiet(["regsvr32", "/s", str(dll)], check=True, timeout=30)
 
     path = _fx_props_path(endpoint_guid, flow)
     prop = _clsid_prop(flow)
-    previous = get_apo_status(endpoint_guid, flow).get("clsid")
+    existing = _read_effect_list(path, prop)
+
     backups = _load_backups()
     key = _backup_key(endpoint_guid, flow)
     if key not in backups:
-        backups[key] = previous
+        backups[key] = existing
         _save_backups(backups)
 
+    others = [c for c in existing if c.lower() != apo_clsid.lower()]
+    new_list = [apo_clsid, *others]
     with winreg.CreateKeyEx(
         winreg.HKEY_LOCAL_MACHINE, path, 0,
         winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY,
     ) as k:
-        winreg.SetValueEx(k, prop, 0, winreg.REG_SZ, apo_clsid)
+        winreg.SetValueEx(k, prop, 0, winreg.REG_MULTI_SZ, new_list)
     _restart_audio_service()
 
 
 def unregister_apo(endpoint_guid: str, flow: str) -> None:
-    """Restore the endpoint's previous APO (or remove ours). Requires admin."""
+    """Restaura la cadena de efectos previa del endpoint. Requiere admin."""
     path = _fx_props_path(endpoint_guid, flow)
     prop = _clsid_prop(flow)
     backups = _load_backups()
@@ -133,7 +152,7 @@ def unregister_apo(endpoint_guid: str, flow: str) -> None:
             winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY,
         ) as k:
             if previous:
-                winreg.SetValueEx(k, prop, 0, winreg.REG_SZ, previous)
+                winreg.SetValueEx(k, prop, 0, winreg.REG_MULTI_SZ, previous)
             else:
                 winreg.DeleteValue(k, prop)
             changed = True
@@ -144,14 +163,16 @@ def unregister_apo(endpoint_guid: str, flow: str) -> None:
         _restart_audio_service()
 
 
-def get_apo_status(endpoint_guid: str, flow: str) -> dict:
+def get_apo_status(endpoint_guid: str, flow: str, apo_clsid: str | None = None) -> dict:
     path = _fx_props_path(endpoint_guid, flow)
-    try:
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path) as k:
-            clsid, _ = winreg.QueryValueEx(k, _clsid_prop(flow))
-            return {"registered": True, "clsid": clsid}
-    except (FileNotFoundError, OSError):
+    effects = _read_effect_list(path, _clsid_prop(flow))
+    if not effects:
         return {"registered": False, "clsid": None}
+    mine = effects[0]
+    if apo_clsid is not None:
+        registered = any(c.lower() == apo_clsid.lower() for c in effects)
+        return {"registered": registered, "clsid": mine}
+    return {"registered": True, "clsid": mine}
 
 
 def get_unsigned_apo_enabled() -> bool:

@@ -8,8 +8,13 @@ ambas propiedades para reconocer el endpoint desde el nombre de sounddevice.
 import winreg
 
 _MMDEVICES_BASE = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio"
-_MFX_CLSID_PROP = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6"
-_SFX_CLSID_PROP = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5"
+# Windows 10/11 lee los CLSID de APO bajo PKEY_CompositeFX (REG_MULTI_SZ),
+# NO bajo las claves legacy PKEY_FX (REG_SZ, Win8.1). Verificado contra el
+# endpoint Realtek: sus APOs viven en {d3993a3f...},5/6/7 como arrays.
+_COMPOSITE_FX = "{d3993a3f-99c2-4402-b5ec-a92a0367664b}"
+_SFX_CLSID_PROP = f"{_COMPOSITE_FX},5"   # PKEY_CompositeFX_StreamEffectClsid
+_MFX_CLSID_PROP = f"{_COMPOSITE_FX},6"   # PKEY_CompositeFX_ModeEffectClsid
+_EFX_CLSID_PROP = f"{_COMPOSITE_FX},7"   # PKEY_CompositeFX_EndpointEffectClsid
 
 # Propiedades del endpoint en <guid>\Properties
 _PROP_FRIENDLY = "{a45c254e-df1c-4efd-8020-67d146a850e0},14"  # nombre completo (a veces ausente)
