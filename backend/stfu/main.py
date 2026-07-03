@@ -1,6 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from stfu.core.logging import setup_logging
+
+setup_logging()
 from stfu.api.routes.devices import router as devices_router
 from stfu.api.routes.pipeline import router as pipeline_router
 from stfu.api.routes.models import router as models_router

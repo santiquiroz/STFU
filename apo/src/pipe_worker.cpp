@@ -1,6 +1,17 @@
 #include "pipe_worker.h"
+#include <cstdio>
 
 namespace {
+
+void Trace(const wchar_t* fmt, ...) {
+    wchar_t buf[256];
+    va_list args;
+    va_start(args, fmt);
+    _vsnwprintf_s(buf, _TRUNCATE, fmt, args);
+    va_end(args);
+    OutputDebugStringW(buf);
+}
+
 constexpr uint32_t kRingChunks = 32;
 constexpr DWORD kConnectRetryMs = 500;
 constexpr DWORD kWaitDataMs = 50;
@@ -57,9 +68,11 @@ bool PipeWorker::Connect() {
     if (pipe_ == INVALID_HANDLE_VALUE) return false;
     DWORD mode = PIPE_READMODE_MESSAGE;
     if (!SetNamedPipeHandleState(pipe_, &mode, nullptr, nullptr)) {
+        Trace(L"[STFU-APO] SetNamedPipeHandleState falló err=%lu\n", GetLastError());
         Disconnect();
         return false;
     }
+    Trace(L"[STFU-APO] conectado a %s\n", pipeName_.c_str());
     return true;
 }
 
@@ -111,6 +124,9 @@ void PipeWorker::Loop() {
             WaitForSingleObject(dataEvent_, kWaitDataMs);
             continue;
         }
-        if (!Exchange(scratch_.data(), chunkSamples_)) Disconnect();
+        if (!Exchange(scratch_.data(), chunkSamples_)) {
+            Trace(L"[STFU-APO] exchange falló err=%lu — passthrough\n", GetLastError());
+            Disconnect();
+        }
     }
 }

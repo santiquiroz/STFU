@@ -143,6 +143,12 @@ STDMETHODIMP StfuApo::LockForProcess(UINT32 u32NumInputConnections,
     channels_ = ua.dwSamplesPerFrame;
     sampleRate_ = static_cast<UINT32>(ua.fFramesPerSecond);
 
+    {
+        wchar_t buf[160];
+        swprintf_s(buf, L"[STFU-APO] LockForProcess rate=%u ch=%u maxFrames=%u pipe=%s\n",
+                   sampleRate_, channels_, in->u32MaxFrameCount, pipeName_.c_str());
+        OutputDebugStringW(buf);
+    }
     worker_.Start(pipeName_, sampleRate_, channels_, in->u32MaxFrameCount);
     locked_ = true;
     return S_OK;

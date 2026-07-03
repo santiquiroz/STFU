@@ -105,12 +105,43 @@ Tests: 54 pasan pero solo cubren happy paths — no hay test de EQ con ganancia 
 
 ## 5. Roadmap recomendado (orden de ejecución)
 
+> Actualización 2026-07-03: pasos 1-4 ejecutados (commits 74f24af, 2498f92,
+> 4bc37d2, 8647a9d, d07fb10, ee3ccde). Se agregan Fase 5b y Fase 6.
+
+
 1. **Quick wins WASAPI (días):** `auto_convert=True` ambos streams; borrar resampler manual de capture.py; `latency='low'`; prefill de cola (2 chunks); contadores de overflow/underflow expuestos en `/status`; fix race `engine.start()`; log + flag `playback_active` cuando el output falla; fix CORS (`http://tauri.localhost`).
 2. **DSP core (días):** DFN3 → API de streaming con estado (DfTract); EQ → biquads peaking RBJ + `sosfilt` con `zi` persistente; adapter → `soxr.ResampleStream` con estado; pipeline → propagar multi-chunk + adaptar salida al formato del stream; mover inferencia a worker thread fuera del callback RT. Tests de regresión: seno continuo por chunks sin energía en armónicos del chunk-rate; EQ con ganancia ≠ 0.
 3. **Servo de drift (días):** ring buffer con telemetría de fill + corrección de ratio ppm vía `samplerate` (libsamplerate), patrón CamillaDSP (ajuste cada ~10s, |corrección| ≤ 200ppm, slew-limited).
 4. **APO C++ DLL (semanas — Tasks 4-5 del plan):** COM DLL delgada y RT-safe; shared memory en lugar de named pipe con polling; CLSIDs reales; elevación UAC real; backup/rollback de FxProperties + botón unregister + auto-repair.
 5. **Frontend (días):** tray, sidecar/spawn del backend Python, reconciliación de toggles con `GET /status`, endpoint set-parameter en vivo (sin reiniciar stream), páginas Advanced y Hub.
 6. **v2 driver virtual:** solo con cert EV; base VirtualDrivers/Virtual-Audio-Driver o SYSVAD; evaluar ACX.
+
+### Fase 5b — Shell Tauri para testers
+- Tray (cerrar ventana = esconder, el audio sigue), spawn del backend
+  (binario empaquetado o venv dev), logs de UI a archivo.
+
+### Fase 6 — Distribución para testers (instalador .exe)
+- **Instalador NSIS** vía Tauri bundler (`targets: ["nsis"]`); MSI (WiX) opcional.
+- **Backend como sidecar**: PyInstaller onedir → `stfu-backend.exe` junto al
+  exe de la UI; el shell lo arranca/detiene solo (ya implementado en lib.rs).
+- **Tamaño**: con torch ~400-600MB; la migración de DFN3 a ONNX+DirectML lo
+  baja a ~100MB (alineado con la meta any-GPU del proyecto).
+- El registro del APO NO va en el instalador: botón en la app (admin,
+  reversible con backup/rollback).
+
+### Requisito transversal — Logging para diagnóstico con testers
+- **Backend**: `~/.stfu/logs/backend.log` rotativo (2MB×3), nivel por
+  `STFU_LOG_LEVEL`; reporte de entorno al arrancar (Python, OS, hostapis,
+  dispositivos con rates nativos) — la primera línea que se mira cuando un
+  tester reporta "no funciona".
+- **UI (Tauri)**: `tauri-plugin-log` → `%LOCALAPPDATA%/com.stfu.desktop/logs/stfu-ui.log`
+  + stdout; incluye el resultado del spawn del backend.
+- **APO (C++)**: trazas `OutputDebugString` en ciclo de vida (LockForProcess
+  con formato, conexión/fallo del pipe) — capturables con DebugView.
+- **Instalador**: NSIS deja log con `/LOG`; documentar en la guía de testers.
+  Diagnóstico post-instalación = el reporte de entorno del backend.
+- Guía de testers: qué archivos adjuntar al reportar un bug (backend.log,
+  stfu-ui.log, versión de Windows).
 
 ---
 
