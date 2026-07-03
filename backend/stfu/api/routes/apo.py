@@ -45,32 +45,17 @@ def apo_status(flow: Literal["Capture", "Render"], device_name: str):
     return get_apo_status(guid, flow)
 
 
-def _needs_elevation(exc: Exception) -> bool:
-    import subprocess
-    if isinstance(exc, PermissionError):
-        return True
-    if isinstance(exc, subprocess.CalledProcessError):
-        return True  # regsvr32 sin admin
-    winerror = getattr(exc, "winerror", None)
-    return winerror == 5
-
-
 @router.post("/register")
 def apo_register(req: ApoRegisterRequest):
     guid = _resolve_guid(req.device_name, req.flow)
     clsid = req.apo_clsid or CLSID_BY_FLOW[req.flow]
+    # register escribe HKLM/HKCR: siempre requiere admin → elevar directo
     try:
-        register_apo(guid, req.flow, clsid)
+        from stfu.apo.elevate import run_elevated
+        run_elevated(["register", guid, req.flow, clsid])
     except Exception as e:
-        if not _needs_elevation(e):
-            _log.exception("fallo en operacion APO")
-            raise HTTPException(500, str(e))
-        try:
-            from stfu.apo.elevate import run_elevated
-            run_elevated(["register", guid, req.flow, clsid])
-        except Exception as e2:
-            _log.exception("fallo en registro APO elevado")
-            raise HTTPException(500, str(e2))
+        _log.exception("fallo en registro APO elevado")
+        raise HTTPException(500, str(e))
     return {"ok": True, "endpoint_guid": guid, "clsid": clsid}
 
 
@@ -82,17 +67,11 @@ def unsigned_status():
 @router.post("/unsigned")
 def unsigned_enable():
     try:
-        enable_unsigned_apos()
+        from stfu.apo.elevate import run_elevated
+        run_elevated(["enable-unsigned"])
     except Exception as e:
-        if not _needs_elevation(e):
-            _log.exception("fallo en operacion APO")
-            raise HTTPException(500, str(e))
-        try:
-            from stfu.apo.elevate import run_elevated
-            run_elevated(["enable-unsigned"])
-        except Exception as e2:
-            _log.exception("fallo habilitando APOs sin firma (elevado)")
-            raise HTTPException(500, str(e2))
+        _log.exception("fallo habilitando APOs sin firma (elevado)")
+        raise HTTPException(500, str(e))
     return {"ok": True, "enabled": True}
 
 
@@ -138,15 +117,9 @@ def bridge_set_parameter(flow: Literal["Capture", "Render"], update: BridgeParam
 def apo_unregister(flow: Literal["Capture", "Render"], device_name: str):
     guid = _resolve_guid(device_name, flow)
     try:
-        unregister_apo(guid, flow)
+        from stfu.apo.elevate import run_elevated
+        run_elevated(["unregister", guid, flow])
     except Exception as e:
-        if not _needs_elevation(e):
-            _log.exception("fallo en operacion APO")
-            raise HTTPException(500, str(e))
-        try:
-            from stfu.apo.elevate import run_elevated
-            run_elevated(["unregister", guid, flow])
-        except Exception as e2:
-            _log.exception("fallo en unregister APO elevado")
-            raise HTTPException(500, str(e2))
+        _log.exception("fallo en unregister APO elevado")
+        raise HTTPException(500, str(e))
     return {"ok": True}

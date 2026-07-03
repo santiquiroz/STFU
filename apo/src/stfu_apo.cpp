@@ -1,4 +1,5 @@
 #include "stfu_apo.h"
+#include <cstdio>
 #include <cstring>
 #include <new>
 
@@ -8,8 +9,21 @@ const GUID kIeeeFloatSubtype =
     {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71}};
 }
 
+// Prueba de que audiodg cargó e instanció el APO: si esta línea aparece en
+// C:\ProgramData\STFU\apo.log tras abrir el dispositivo, el APO está en la
+// cadena. Escribible por audiodg (LocalService) porque ProgramData lo es.
+void StfuApo::FileLog(const char* msg) const {
+    FILE* f = nullptr;
+    if (fopen_s(&f, "C:\\ProgramData\\STFU\\apo.log", "a") == 0 && f) {
+        fprintf(f, "[tick %lu] %ls: %s\n", GetTickCount(), friendlyName_.c_str(), msg);
+        fclose(f);
+    }
+}
+
 StfuApo::StfuApo(REFCLSID clsid, const wchar_t* friendlyName, const wchar_t* pipeName)
-    : clsid_(clsid), friendlyName_(friendlyName), pipeName_(pipeName) {}
+    : clsid_(clsid), friendlyName_(friendlyName), pipeName_(pipeName) {
+    FileLog("APO construido — audiodg encontró e instanció el CLSID");
+}
 
 StfuApo::~StfuApo() { worker_.Stop(); }
 
@@ -79,6 +93,7 @@ STDMETHODIMP StfuApo::GetRegistrationProperties(APO_REG_PROPERTIES** ppRegProps)
 STDMETHODIMP StfuApo::Initialize(UINT32 cbDataSize, BYTE* pbyData) {
     UNREFERENCED_PARAMETER(cbDataSize);
     UNREFERENCED_PARAMETER(pbyData);
+    FileLog("Initialize — audiodg instanció el APO");
     return S_OK;
 }
 
@@ -148,6 +163,10 @@ STDMETHODIMP StfuApo::LockForProcess(UINT32 u32NumInputConnections,
         swprintf_s(buf, L"[STFU-APO] LockForProcess rate=%u ch=%u maxFrames=%u pipe=%s\n",
                    sampleRate_, channels_, in->u32MaxFrameCount, pipeName_.c_str());
         OutputDebugStringW(buf);
+        char abuf[128];
+        sprintf_s(abuf, "LockForProcess rate=%u ch=%u — audiodg CARGO el APO",
+                  sampleRate_, channels_);
+        FileLog(abuf);
     }
     worker_.Start(pipeName_, sampleRate_, channels_, in->u32MaxFrameCount);
     locked_ = true;

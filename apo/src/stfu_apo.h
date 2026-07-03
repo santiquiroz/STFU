@@ -51,6 +51,7 @@ public:
 
 private:
     HRESULT CheckFloat32(IAudioMediaType* fmt) const;
+    void FileLog(const char* msg) const;
 
     std::atomic<ULONG> refs_{1};
     CLSID clsid_;

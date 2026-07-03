@@ -18,6 +18,23 @@ _APO_MACHINE_DIR = Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "STF
 _APO_MACHINE_DLL = _APO_MACHINE_DIR / "stfu_apo.dll"
 
 
+_CREATE_NO_WINDOW = 0x0800_0000
+
+
+def _run_quiet(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    """subprocess robusto en proceso sin consola: redirige los 3 handles a
+    DEVNULL (heredar los handles inválidos del padre da WinError 50) y evita
+    abrir una ventana."""
+    return subprocess.run(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=_CREATE_NO_WINDOW,
+        **kw,
+    )
+
+
 def _bundled_apo_dll() -> Path:
     if getattr(sys, "frozen", False):
         # PyInstaller 6 onedir: binarios en _internal/ (sys._MEIPASS); onefile
@@ -82,8 +99,7 @@ def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
     fabricante del dispositivo.
     """
     dll = _stage_apo_dll()
-    subprocess.run(["regsvr32", "/s", str(dll)], check=True,
-                   stdin=subprocess.DEVNULL, timeout=30)
+    _run_quiet(["regsvr32", "/s", str(dll)], check=True, timeout=30)
 
     path = _fx_props_path(endpoint_guid, flow)
     prop = _clsid_prop(flow)
@@ -170,11 +186,10 @@ def _restart_audio_service() -> None:
     maneja sin prompt; stdin cerrado + timeout garantizan que nunca se cuelgue.
     """
     try:
-        subprocess.run(
+        _run_quiet(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command",
              "Restart-Service -Name Audiosrv -Force -ErrorAction Stop"],
-            check=False, capture_output=True,
-            stdin=subprocess.DEVNULL, timeout=90,
+            check=False, timeout=90,
         )
     except subprocess.TimeoutExpired:
         _log.warning("Restart-Service audiosrv excedió el timeout; el APO se "

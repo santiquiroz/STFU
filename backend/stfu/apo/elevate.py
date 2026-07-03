@@ -36,9 +36,14 @@ def run_elevated(op_args: list[str]) -> None:
         f"-Verb RunAs -Wait -PassThru; exit $p.ExitCode"
     )
     _log.info("elevando operación APO: %s %s", Path(exe).name, " ".join(args))
+    # sin consola, heredar los handles del padre da WinError 50: redirigir los 3
     result = subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-        capture_output=True, text=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=0x0800_0000,  # CREATE_NO_WINDOW
+        timeout=180,
     )
     if result.returncode != 0:
         raise RuntimeError(
