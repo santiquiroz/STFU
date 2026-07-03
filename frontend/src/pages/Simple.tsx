@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
+import { usePipelineStatus } from "../hooks/usePipeline";
 import {
-  usePipelineStatus,
-  useStartPipeline,
-  useStopPipeline,
-} from "../hooks/usePipeline";
-import { api, ApoRegisterRequest, STFU_APO_SFX_CLSID } from "../services/api";
+  api,
+  ApoRegisterRequest,
+  STFU_APO_MFX_CLSID,
+  STFU_APO_SFX_CLSID,
+} from "../services/api";
 
 function Toggle({
   on,
@@ -51,6 +52,7 @@ export function Simple() {
   const [micError, setMicError] = useState<string | null>(null);
   const [speakerError, setSpeakerError] = useState<string | null>(null);
 
+  const [micBusy, setMicBusy] = useState(false);
   const [speakerBusy, setSpeakerBusy] = useState(false);
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
@@ -59,16 +61,14 @@ export function Simple() {
     queryFn: api.getBridgeStatus,
     refetchInterval: 2000,
   });
-  const startMic = useStartPipeline("mic");
-  const stopMic = useStopPipeline("mic");
 
-  // Reconciliación: los toggles reflejan el estado real del backend
-  // (reinicios, pipelines ya activos al abrir la UI, streams caídos)
+  // Reconciliación: los toggles reflejan el estado real del bridge APO
+  // (reinicios del backend, o ya activos al abrir la UI)
   useEffect(() => {
-    if (status && !startMic.isPending && !stopMic.isPending) {
-      setMicOn(status.active.includes("mic"));
+    if (bridge && !micBusy) {
+      setMicOn(Boolean(bridge.active["Capture"]));
     }
-  }, [status, startMic.isPending, stopMic.isPending]);
+  }, [bridge, micBusy]);
 
   useEffect(() => {
     if (bridge && !speakerBusy) {
@@ -81,17 +81,8 @@ export function Simple() {
   const effectiveInput = selectedInput ?? inputs[0]?.id ?? 0;
   const effectiveOutput = selectedOutput ?? outputs[0]?.id ?? 0;
 
-  function buildMicRequest(s: number) {
-    return {
-      plugins: [
-        {
-          plugin_id: "deepfilternet3",
-          parameters: { strength: s / 100 },
-        },
-      ],
-      input_device_id: effectiveInput,
-      output_device_id: effectiveOutput,
-    };
+  function dfn3Plugins(s: number) {
+    return [{ plugin_id: "deepfilternet3", parameters: { strength: s / 100 } }];
   }
 
   function extractError(e: unknown): string {
@@ -104,43 +95,73 @@ export function Simple() {
 
   async function handleMicToggle(next: boolean) {
     setMicError(null);
+    setMicBusy(true);
+    try {
+      await doMicToggle(next);
+    } finally {
+      setMicBusy(false);
+    }
+  }
+
+  async function doMicToggle(next: boolean) {
     if (next) {
-      setMicOn(true);
+      const micDevice = inputs.find((d) => d.id === effectiveInput);
+      if (!micDevice) return;
       try {
-        await startMic.mutateAsync(buildMicRequest(strength));
-      } catch (e: unknown) {
+        await ensureApoRegistered("Capture", micDevice.name, STFU_APO_MFX_CLSID, setMicError);
+        // APO de captura: Discord/Zoom que usen el MISMO micrófono reciben
+        // audio ya limpio — no aparece ningún dispositivo nuevo
+        await api.startBridge("Capture", dfn3Plugins(strength));
+        setMicOn(true);
+      } catch (e) {
         setMicOn(false);
         setMicError(extractError(e));
       }
     } else {
       setMicOn(false);
-      await stopMic.mutateAsync();
+      try {
+        await api.stopBridge("Capture");
+      } catch {
+        /* bridge ya detenido */
+      }
     }
   }
 
-  async function ensureApoRegistered(deviceName: string): Promise<void> {
+  async function handleMicUnregister() {
+    const micDevice = inputs.find((d) => d.id === effectiveInput);
+    if (!micDevice) return;
+    setMicError(null);
+    try {
+      await api.stopBridge("Capture");
+      await api.unregisterApo("Capture", micDevice.name);
+      setMicOn(false);
+    } catch (e) {
+      setMicError(extractError(e));
+    }
+  }
+
+  async function ensureApoRegistered(
+    flow: "Capture" | "Render",
+    deviceName: string,
+    clsid: string,
+    setError: (m: string | null) => void,
+  ): Promise<void> {
     const unsigned = await api.getUnsignedApoEnabled();
     if (!unsigned.enabled) {
-      setSpeakerError(
-        "Requiere habilitar APOs sin firma (una sola vez, admin). " +
-          "Ejecuta el backend como administrador y reintenta.",
-      );
+      setError("Habilitando STFU en el motor de audio (pedirá permisos de administrador)...");
       await api.enableUnsignedApos();
-      setSpeakerError(null);
+      setError(null);
     }
-    const apoStatus = await api.getApoStatus("Render", deviceName);
-    if (apoStatus.registered && apoStatus.clsid === STFU_APO_SFX_CLSID) return;
-    setSpeakerError(
-      "Registrando STFU APO en el dispositivo (requiere admin; " +
-        "el audio del sistema se reinicia ~2s)...",
-    );
+    const apoStatus = await api.getApoStatus(flow, deviceName);
+    if (apoStatus.registered && apoStatus.clsid === clsid) return;
+    setError("Instalando STFU en el dispositivo (admin; el audio se reinicia ~2s)...");
     const req: ApoRegisterRequest = {
-      flow: "Render",
+      flow,
       device_name: deviceName,
-      apo_clsid: STFU_APO_SFX_CLSID,
+      apo_clsid: clsid,
     };
     await api.registerApo(req);
-    setSpeakerError(null);
+    setError(null);
   }
 
   async function handleSpeakerToggle(next: boolean) {
@@ -158,11 +179,9 @@ export function Simple() {
       const outputDevice = outputs.find((d) => d.id === effectiveOutput);
       if (!outputDevice) return;
       try {
-        await ensureApoRegistered(outputDevice.name);
+        await ensureApoRegistered("Render", outputDevice.name, STFU_APO_SFX_CLSID, setSpeakerError);
         // pipeline del APO: audiodg → pipe → DFN3 → de vuelta al endpoint
-        await api.startBridge("Render", [
-          { plugin_id: "deepfilternet3", parameters: { strength: strength / 100 } },
-        ]);
+        await api.startBridge("Render", dfn3Plugins(strength));
         setSpeakerOn(true);
       } catch (e) {
         setSpeakerOn(false);
@@ -192,10 +211,10 @@ export function Simple() {
   }
 
   async function handleStrengthRelease() {
-    // Parámetro en vivo: sin reiniciar streams (sin glitch audible)
+    // Parámetro en vivo: sin reiniciar el bridge (sin glitch audible)
     if (micOn) {
       try {
-        await api.setParameter("mic", 0, "strength", strength / 100);
+        await api.setBridgeParameter("Capture", 0, "strength", strength / 100);
       } catch {
         /* leave on, retry on next toggle */
       }
@@ -210,7 +229,7 @@ export function Simple() {
   }
 
   const latency = status?.latency_ms ?? 0;
-  const micLoading = startMic.isPending || stopMic.isPending;
+  const micLoading = micBusy;
   const speakerLoading = speakerBusy;
 
   return (
@@ -259,6 +278,19 @@ export function Simple() {
             className="w-full accent-green-500"
           />
         </div>
+        <p className="text-[11px] text-zinc-500 leading-snug">
+          Con esto activo, cualquier app (Discord, Zoom…) que use{" "}
+          <span className="text-zinc-400">este mismo micrófono</span> recibe el
+          audio ya limpio. No aparece ningún micrófono nuevo — es el diseño.
+        </p>
+        {micOn && (
+          <button
+            onClick={handleMicUnregister}
+            className="self-start text-xs text-zinc-500 hover:text-zinc-300 underline"
+          >
+            Desinstalar STFU APO de este micrófono
+          </button>
+        )}
       </div>
 
       {/* Speaker */}

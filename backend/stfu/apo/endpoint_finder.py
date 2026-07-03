@@ -1,10 +1,22 @@
-"""Find Windows audio endpoint GUIDs by device name."""
-import winreg
+"""Find Windows audio endpoint GUIDs by device name.
 
+sounddevice muestra el endpoint como "Altavoces (2- FiiO Q series)", pero el
+registro NO guarda ese string combinado: lo parte en DeviceDesc ("Altavoces")
+y el nombre de interfaz del hardware ("FiiO Q series"). El matcher combina
+ambas propiedades para reconocer el endpoint desde el nombre de sounddevice.
+"""
+import winreg
 
 _MMDEVICES_BASE = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio"
 _MFX_CLSID_PROP = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},6"
 _SFX_CLSID_PROP = "{d04e05a6-594b-4fb6-a80d-01af5eed7d1d},5"
+
+# Propiedades del endpoint en <guid>\Properties
+_PROP_FRIENDLY = "{a45c254e-df1c-4efd-8020-67d146a850e0},14"  # nombre completo (a veces ausente)
+_PROP_DESC = "{a45c254e-df1c-4efd-8020-67d146a850e0},2"       # "Altavoces" / "Micrófono"
+_PROP_IFACE = "{b3f8fa53-0004-438e-9003-51a46e139bfc},6"      # "FiiO Q series"
+
+_STATE_ACTIVE = 1
 
 
 def _flow_key(flow: str) -> str:
@@ -12,32 +24,68 @@ def _flow_key(flow: str) -> str:
     return f"{_MMDEVICES_BASE}\\{flow}"
 
 
+def _read_prop(props_path: str, prop: str) -> str:
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, props_path) as k:
+            val, _ = winreg.QueryValueEx(k, prop)
+            return str(val)
+    except OSError:
+        return ""
+
+
+def _device_state(base: str, guid: str) -> int:
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, f"{base}\\{guid}") as k:
+            val, _ = winreg.QueryValueEx(k, "DeviceState")
+            return int(val)
+    except OSError:
+        return -1
+
+
+def _matches(device_name: str, props_path: str) -> bool:
+    dn = device_name.lower()
+    friendly = _read_prop(props_path, _PROP_FRIENDLY).lower()
+    if friendly and (friendly in dn or dn in friendly):
+        return True
+    # el nombre de interfaz del hardware es el discriminante ("FiiO Q series")
+    iface = _read_prop(props_path, _PROP_IFACE).lower()
+    if iface and iface in dn:
+        return True
+    return False
+
+
 def find_endpoint_guid(device_name: str, flow: str) -> str | None:
-    """Return the GUID string for the endpoint whose FriendlyName contains device_name."""
+    """GUID del endpoint cuyo nombre coincide con el de sounddevice.
+    Prefiere endpoints activos; cae a inactivos si no hay activo que calce."""
     base = _flow_key(flow)
+    fallback: str | None = None
     try:
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as base_key:
             i = 0
             while True:
                 try:
                     guid = winreg.EnumKey(base_key, i)
-                    friendly = _read_friendly_name(base, guid)
-                    if device_name.lower() in friendly.lower():
-                        return guid
-                    i += 1
                 except OSError:
                     break
+                i += 1
+                if not _matches(device_name, f"{base}\\{guid}\\Properties"):
+                    continue
+                if _device_state(base, guid) == _STATE_ACTIVE:
+                    return guid
+                fallback = fallback or guid
     except OSError:
         return None
-    return None
+    return fallback
 
 
 def _read_friendly_name(base: str, guid: str) -> str:
-    try:
-        props_path = f"{base}\\{guid}\\Properties"
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, props_path) as k:
-            # PKEY_Device_FriendlyName = {a45c254e-df1c-4efd-8020-67d146a850e0},14
-            val, _ = winreg.QueryValueEx(k, "{a45c254e-df1c-4efd-8020-67d146a850e0},14")
-            return str(val)
-    except OSError:
-        return ""
+    """Nombre visible del endpoint, combinando DeviceDesc e interfaz."""
+    props = f"{base}\\{guid}\\Properties"
+    full = _read_prop(props, _PROP_FRIENDLY)
+    if full:
+        return full
+    desc = _read_prop(props, _PROP_DESC)
+    iface = _read_prop(props, _PROP_IFACE)
+    if desc and iface:
+        return f"{desc} ({iface})"
+    return desc or iface

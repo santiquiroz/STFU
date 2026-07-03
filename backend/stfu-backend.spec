@@ -1,10 +1,15 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_dynamic_libs
 from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
+# La DLL del APO viaja junto a stfu-backend.exe; register.py la localiza ahí
+_apo_dll = os.path.join(os.path.dirname(os.path.abspath(SPEC)), "..", "apo", "build", "stfu_apo.dll")
+if os.path.exists(_apo_dll):
+    binaries += [(_apo_dll, ".")]
 hiddenimports = ['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on']
 datas += collect_data_files('_sounddevice_data')
 binaries += collect_dynamic_libs('soxr')
