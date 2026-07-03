@@ -153,16 +153,17 @@ export function Simple() {
   }
 
   async function handleStrengthRelease() {
+    // Parámetro en vivo: sin reiniciar streams (sin glitch audible)
     if (micOn) {
       try {
-        await startMic.mutateAsync(buildMicRequest(strength));
+        await api.setParameter("mic", 0, "strength", strength / 100);
       } catch {
         /* leave on, retry on next toggle */
       }
     }
     if (speakerOn) {
       try {
-        await startSpeaker.mutateAsync(buildSpeakerRequest(strength));
+        await api.setParameter("speaker", 0, "strength", strength / 100);
       } catch {
         /* leave on, retry on next toggle */
       }

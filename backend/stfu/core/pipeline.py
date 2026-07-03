@@ -24,6 +24,11 @@ class Pipeline:
     def add_plugin(self, plugin: AudioPlugin) -> None:
         self._plugins.append(plugin)
 
+    def set_parameter(self, plugin_index: int, param_id: str, value) -> None:
+        if not 0 <= plugin_index < len(self._plugins):
+            raise IndexError(f"plugin_index {plugin_index} fuera de rango")
+        self._plugins[plugin_index].set_parameter(param_id, value)
+
     def clear(self) -> None:
         for p in self._plugins:
             p.teardown()

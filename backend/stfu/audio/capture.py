@@ -159,6 +159,10 @@ class CaptureThread:
         outdata[:] = self._ring.read(frames)
 
     @property
+    def pipeline(self) -> Pipeline:
+        return self._pipeline
+
+    @property
     def measured_latency_ms(self) -> float:
         return self._latency_ms
 

@@ -39,3 +39,19 @@ def test_pipeline_mic_accepts_config():
     })
     assert r.status_code == 200
     assert r.json()["ok"] is True
+
+
+def test_set_parameter_on_inactive_pipeline_returns_404():
+    r = client.post(
+        "/pipeline/mic/parameter",
+        json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
+    )
+    assert r.status_code == 404
+
+
+def test_set_parameter_invalid_target_returns_400():
+    r = client.post(
+        "/pipeline/foo/parameter",
+        json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
+    )
+    assert r.status_code == 400

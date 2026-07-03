@@ -70,6 +70,20 @@ export const api = {
   getActivePipelines: (): Promise<{ active: string[] }> =>
     client.get("/pipeline/active").then((r) => r.data),
 
+  setParameter: (
+    target: "mic" | "speaker",
+    pluginIndex: number,
+    parameterId: string,
+    value: number,
+  ): Promise<{ ok: boolean }> =>
+    client
+      .post(`/pipeline/${target}/parameter`, {
+        plugin_index: pluginIndex,
+        parameter_id: parameterId,
+        value,
+      })
+      .then((r) => r.data),
+
   getApoStatus: (flow: string, deviceName: string): Promise<ApoStatus> =>
     client
       .get(`/apo/status/${flow}`, { params: { device_name: deviceName } })

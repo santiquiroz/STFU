@@ -99,5 +99,13 @@ class AudioEngine:
             threads = dict(self._threads)
         return {target: t.stats for target, t in threads.items()}
 
+    def set_parameter(self, target: str, plugin_index: int, param_id: str, value) -> bool:
+        with self._lock:
+            thread = self._threads.get(target)
+        if thread is None:
+            return False
+        thread.pipeline.set_parameter(plugin_index, param_id, value)
+        return True
+
 
 engine = AudioEngine()

@@ -43,6 +43,25 @@ def stop_pipeline(target: str):
     return {"ok": True, "target": target, "active": False}
 
 
+class ParameterUpdate(BaseModel):
+    plugin_index: int
+    parameter_id: str
+    value: float
+
+
+@router.post("/pipeline/{target}/parameter")
+def set_parameter(target: str, update: ParameterUpdate):
+    if target not in ("mic", "speaker"):
+        raise HTTPException(status_code=400, detail="target must be 'mic' or 'speaker'")
+    try:
+        ok = engine.set_parameter(target, update.plugin_index, update.parameter_id, update.value)
+    except IndexError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"pipeline '{target}' no está activo")
+    return {"ok": True, "target": target, "parameter_id": update.parameter_id, "value": update.value}
+
+
 @router.get("/pipeline/active")
 def active_pipelines():
     return {"active": engine.active_targets()}

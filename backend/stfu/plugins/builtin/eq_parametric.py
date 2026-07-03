@@ -36,8 +36,9 @@ class EQParametricPlugin(AudioPlugin):
         self._bands = [dict(b) for b in _DEFAULTS]
         self._sample_rate = 48000
         self._channels = 1
-        self._sos: np.ndarray | None = None
-        self._zi: np.ndarray | None = None
+        # (sos, zi) en una sola referencia: swap atómico bajo el GIL cuando
+        # la UI cambia parámetros mientras el worker procesa
+        self._filters: tuple[np.ndarray, np.ndarray] | None = None
 
     @property
     def preferred_format(self) -> AudioFormat:
@@ -50,14 +51,17 @@ class EQParametricPlugin(AudioPlugin):
         return fmt
 
     def process(self, audio: np.ndarray) -> np.ndarray:
-        if self._sos is None:
+        filters = self._filters
+        if filters is None:
             return audio
-        out, self._zi = sosfilt(self._sos, audio, axis=0, zi=self._zi)
+        sos, zi = filters
+        out, zi_new = sosfilt(sos, audio, axis=0, zi=zi)
+        if self._filters is filters:
+            self._filters = (sos, zi_new)
         return out.astype(np.float32)
 
     def teardown(self) -> None:
-        self._sos = None
-        self._zi = None
+        self._filters = None
 
     @property
     def algorithmic_latency_ms(self) -> float:
@@ -92,9 +96,8 @@ class EQParametricPlugin(AudioPlugin):
             if b["gain_db"] != 0.0 and b["freq"] < nyq
         ]
         if not sections:
-            self._sos = None
-            self._zi = None
+            self._filters = None
             return
-        self._sos = np.stack(sections)
+        sos = np.stack(sections)
         # estado se resetea al cambiar parámetros: transitorio breve aceptable
-        self._zi = np.zeros((self._sos.shape[0], 2, self._channels))
+        self._filters = (sos, np.zeros((sos.shape[0], 2, self._channels)))

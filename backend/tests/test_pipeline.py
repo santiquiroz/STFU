@@ -110,6 +110,27 @@ def test_pipeline_no_data_loss_when_adapter_splits_chunks():
     np.testing.assert_array_almost_equal(result, audio * 2.0)
 
 
+def test_set_parameter_applies_live():
+    class _ParamGain(_GainPlugin):
+        def set_parameter(self, id, value):
+            if id == "gain":
+                self._gain = float(value)
+
+    p = Pipeline()
+    p.add_plugin(_ParamGain(gain=1.0))
+    p.compile(AudioFormat(48000, 1, 960))
+    audio = np.ones((960, 1), dtype=np.float32)
+    np.testing.assert_array_almost_equal(p.process(audio), audio)
+    p.set_parameter(0, "gain", 4.0)
+    np.testing.assert_array_almost_equal(p.process(audio), audio * 4.0)
+
+
+def test_set_parameter_out_of_range_raises():
+    p = Pipeline()
+    with pytest.raises(IndexError):
+        p.set_parameter(0, "x", 1.0)
+
+
 def test_pipeline_output_adapted_back_to_stream_format():
     # Plugin de 16k: la salida debe volver al formato del stream (48k/960)
     # y, pasado el priming del resampler, transportar señal real.
