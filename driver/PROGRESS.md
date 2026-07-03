@@ -64,3 +64,13 @@ Los 5 fallos son **100% ambientales**, no regresiones de código:
 ### Bug latente detectado
 
 `stfu/audio/devices.py`: `get_default_input()` / `get_default_output()` lanzan `StopIteration` cruda cuando no hay device del tipo pedido (fallback `next(...)` sin default). Debe ser un error de dominio claro. Pendiente de fix + tests.
+
+### Deliverables del trabajo alternativo (verificados)
+
+1. **Verificador del cable (Fase 3) — LISTO** (`driver/verify_cable.py`): reproduce un seno por "STFU Audio Bridge" y captura de "STFU Microphone", verifica el pico ~1kHz por FFT con SNR. Núcleo DSP (`dominant_frequency`) es función pura. CLI: exit 2 si el driver no está, 0/1 según pase. Ya corre en esta PC → exit 2 (endpoints ausentes), como se espera sin driver. **Queda listo para verificar el loopback en cuanto el driver compile e instale.**
+2. **Tests del verificador — 9/9 verde** (`backend/tests/test_verify_cable.py`): validan la detección de pico con señales sintéticas (1kHz limpio, otras frecuencias, con ruido, estéreo, señal vacía, ruido puro rechazado). Sin hardware.
+3. **Baselines establecidos:** suite backend 103 passed / 5 ambientales; frontend `tsc --noEmit` limpio; node_modules instalado.
+
+### Auditoría paralela del backend (en curso)
+
+Workflow de 5 dimensiones (devices, feeder, transport, capture-engine, frontend) con verificación adversarial de cada hallazgo. Los fixes confirmados se implementan con la suite corriendo tras cada cambio.
