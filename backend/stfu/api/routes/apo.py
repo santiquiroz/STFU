@@ -84,6 +84,23 @@ def bridge_stop(flow: Literal["Capture", "Render"]):
     return {"ok": True, "flow": flow}
 
 
+class BridgeParameterUpdate(BaseModel):
+    plugin_index: int
+    parameter_id: str
+    value: float
+
+
+@router.post("/bridge/{flow}/parameter")
+def bridge_set_parameter(flow: Literal["Capture", "Render"], update: BridgeParameterUpdate):
+    try:
+        ok = apo_engine.set_parameter(flow, update.plugin_index, update.parameter_id, update.value)
+    except IndexError as exc:
+        raise HTTPException(400, str(exc))
+    if not ok:
+        raise HTTPException(404, f"bridge '{flow}' no está activo")
+    return {"ok": True, "flow": flow, "parameter_id": update.parameter_id}
+
+
 @router.delete("/register/{flow}")
 def apo_unregister(flow: Literal["Capture", "Render"], device_name: str):
     guid = _resolve_guid(device_name, flow)

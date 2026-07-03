@@ -44,5 +44,13 @@ class ApoEngine:
         with self._lock:
             return {flow: True for flow in self._servers}
 
+    def set_parameter(self, flow: str, plugin_index: int, param_id: str, value) -> bool:
+        with self._lock:
+            server = self._servers.get(flow)
+        if server is None:
+            return False
+        server.pipeline.set_parameter(plugin_index, param_id, value)
+        return True
+
 
 apo_engine = ApoEngine()

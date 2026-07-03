@@ -98,4 +98,36 @@ export const api = {
     client
       .delete(`/apo/register/${flow}`, { params: { device_name: deviceName } })
       .then((r) => r.data),
+
+  getUnsignedApoEnabled: (): Promise<{ enabled: boolean }> =>
+    client.get("/apo/unsigned").then((r) => r.data),
+
+  enableUnsignedApos: (): Promise<{ ok: boolean }> =>
+    client.post("/apo/unsigned").then((r) => r.data),
+
+  getBridgeStatus: (): Promise<{ active: Record<string, boolean> }> =>
+    client.get("/apo/bridge").then((r) => r.data),
+
+  startBridge: (
+    flow: "Capture" | "Render",
+    plugins: PluginConfig[],
+  ): Promise<{ ok: boolean }> =>
+    client.post(`/apo/bridge/${flow}`, { plugins }).then((r) => r.data),
+
+  stopBridge: (flow: "Capture" | "Render"): Promise<{ ok: boolean }> =>
+    client.delete(`/apo/bridge/${flow}`).then((r) => r.data),
+
+  setBridgeParameter: (
+    flow: "Capture" | "Render",
+    pluginIndex: number,
+    parameterId: string,
+    value: number,
+  ): Promise<{ ok: boolean }> =>
+    client
+      .post(`/apo/bridge/${flow}/parameter`, {
+        plugin_index: pluginIndex,
+        parameter_id: parameterId,
+        value,
+      })
+      .then((r) => r.data),
 };

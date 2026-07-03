@@ -103,6 +103,10 @@ class ApoPipeServer:
         self._thread: threading.Thread | None = None
         self._fmt_key: tuple[int, int, int] | None = None
 
+    @property
+    def pipeline(self):
+        return self._pipeline
+
     def start(self) -> None:
         """Start the named pipe server."""
         if not _WIN32_AVAILABLE:

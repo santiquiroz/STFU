@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import {
   usePipelineStatus,
@@ -50,12 +51,30 @@ export function Simple() {
   const [micError, setMicError] = useState<string | null>(null);
   const [speakerError, setSpeakerError] = useState<string | null>(null);
 
+  const [speakerBusy, setSpeakerBusy] = useState(false);
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
+  const { data: bridge } = useQuery({
+    queryKey: ["apo-bridge"],
+    queryFn: api.getBridgeStatus,
+    refetchInterval: 2000,
+  });
   const startMic = useStartPipeline("mic");
   const stopMic = useStopPipeline("mic");
-  const startSpeaker = useStartPipeline("speaker");
-  const stopSpeaker = useStopPipeline("speaker");
+
+  // Reconciliación: los toggles reflejan el estado real del backend
+  // (reinicios, pipelines ya activos al abrir la UI, streams caídos)
+  useEffect(() => {
+    if (status && !startMic.isPending && !stopMic.isPending) {
+      setMicOn(status.active.includes("mic"));
+    }
+  }, [status, startMic.isPending, stopMic.isPending]);
+
+  useEffect(() => {
+    if (bridge && !speakerBusy) {
+      setSpeakerOn(Boolean(bridge.active["Render"]));
+    }
+  }, [bridge, speakerBusy]);
 
   const inputs = devices.filter((d) => d.channels_in > 0);
   const outputs = devices.filter((d) => d.channels_out > 0);
@@ -71,19 +90,6 @@ export function Simple() {
         },
       ],
       input_device_id: effectiveInput,
-      output_device_id: effectiveOutput,
-    };
-  }
-
-  function buildSpeakerRequest(s: number) {
-    return {
-      plugins: [
-        {
-          plugin_id: "deepfilternet3",
-          parameters: { strength: s / 100 },
-        },
-      ],
-      input_device_id: effectiveOutput,
       output_device_id: effectiveOutput,
     };
   }
@@ -113,11 +119,20 @@ export function Simple() {
   }
 
   async function ensureApoRegistered(deviceName: string): Promise<void> {
+    const unsigned = await api.getUnsignedApoEnabled();
+    if (!unsigned.enabled) {
+      setSpeakerError(
+        "Requiere habilitar APOs sin firma (una sola vez, admin). " +
+          "Ejecuta el backend como administrador y reintenta.",
+      );
+      await api.enableUnsignedApos();
+      setSpeakerError(null);
+    }
     const apoStatus = await api.getApoStatus("Render", deviceName);
-    if (apoStatus.registered) return;
+    if (apoStatus.registered && apoStatus.clsid === STFU_APO_SFX_CLSID) return;
     setSpeakerError(
-      "Primera vez: requiere permisos de administrador para instalar STFU APO. " +
-        "Se abrirá UAC — acepta para continuar.",
+      "Registrando STFU APO en el dispositivo (requiere admin; " +
+        "el audio del sistema se reinicia ~2s)...",
     );
     const req: ApoRegisterRequest = {
       flow: "Render",
@@ -130,25 +145,49 @@ export function Simple() {
 
   async function handleSpeakerToggle(next: boolean) {
     setSpeakerError(null);
+    setSpeakerBusy(true);
+    try {
+      await doSpeakerToggle(next);
+    } finally {
+      setSpeakerBusy(false);
+    }
+  }
+
+  async function doSpeakerToggle(next: boolean) {
     if (next) {
       const outputDevice = outputs.find((d) => d.id === effectiveOutput);
       if (!outputDevice) return;
       try {
         await ensureApoRegistered(outputDevice.name);
-      } catch (e) {
-        setSpeakerError(extractError(e));
-        return;
-      }
-      setSpeakerOn(true);
-      try {
-        await startSpeaker.mutateAsync(buildSpeakerRequest(strength));
+        // pipeline del APO: audiodg → pipe → DFN3 → de vuelta al endpoint
+        await api.startBridge("Render", [
+          { plugin_id: "deepfilternet3", parameters: { strength: strength / 100 } },
+        ]);
+        setSpeakerOn(true);
       } catch (e) {
         setSpeakerOn(false);
         setSpeakerError(extractError(e));
       }
     } else {
       setSpeakerOn(false);
-      await stopSpeaker.mutateAsync();
+      try {
+        await api.stopBridge("Render");
+      } catch {
+        /* bridge ya detenido */
+      }
+    }
+  }
+
+  async function handleSpeakerUnregister() {
+    const outputDevice = outputs.find((d) => d.id === effectiveOutput);
+    if (!outputDevice) return;
+    setSpeakerError(null);
+    try {
+      await api.stopBridge("Render");
+      await api.unregisterApo("Render", outputDevice.name);
+      setSpeakerOn(false);
+    } catch (e) {
+      setSpeakerError(extractError(e));
     }
   }
 
@@ -163,7 +202,7 @@ export function Simple() {
     }
     if (speakerOn) {
       try {
-        await api.setParameter("speaker", 0, "strength", strength / 100);
+        await api.setBridgeParameter("Render", 0, "strength", strength / 100);
       } catch {
         /* leave on, retry on next toggle */
       }
@@ -172,7 +211,7 @@ export function Simple() {
 
   const latency = status?.latency_ms ?? 0;
   const micLoading = startMic.isPending || stopMic.isPending;
-  const speakerLoading = startSpeaker.isPending || stopSpeaker.isPending;
+  const speakerLoading = speakerBusy;
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white p-6 flex flex-col gap-5 select-none">
@@ -250,6 +289,12 @@ export function Simple() {
             ⚠ {speakerError}
           </p>
         )}
+        <button
+          onClick={handleSpeakerUnregister}
+          className="self-start text-xs text-zinc-500 hover:text-zinc-300 underline"
+        >
+          Desinstalar STFU APO de este dispositivo
+        </button>
       </div>
 
       {/* Latency */}

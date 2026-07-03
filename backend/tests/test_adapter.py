@@ -58,6 +58,25 @@ def test_resample_no_boundary_clicks():
     assert np.max(np.abs(np.diff(signal))) < max_theoretical_step * 1.5
 
 
+def test_extreme_ratio_192k_to_16k_model():
+    # Caso real: mic de 192kHz alimentando un modelo que exige 16kHz mono.
+    src = AudioFormat(192000, 2, 3840)   # 20ms @ 192k estéreo
+    dst = AudioFormat(16000, 1, 320)     # 20ms @ 16k mono
+    adapter = FormatAdapter(src, dst)
+    fs, freq = 192000, 1000.0
+    chunks = []
+    for i in range(10):
+        t = (np.arange(3840) + i * 3840) / fs
+        sig = np.sin(2 * np.pi * freq * t).astype(np.float32)
+        chunks.extend(adapter.convert(np.stack([sig, sig], axis=1)))
+    assert all(c.shape == (320, 1) for c in chunks)
+    total = sum(len(c) for c in chunks)
+    # ratio 12:1 → el FIR de soxr retiene ~2-3 chunks de delay; el resto fluye
+    assert total >= 6 * 320
+    tail = np.concatenate([c[:, 0] for c in chunks[5:]])
+    assert float(np.sqrt(np.mean(tail ** 2))) > 0.5  # señal íntegra, no ceros
+
+
 def test_no_buffering_latency_when_durations_match_across_rates():
     src = AudioFormat(16000, 1, 320)   # 20ms
     dst = AudioFormat(48000, 1, 960)   # 20ms
