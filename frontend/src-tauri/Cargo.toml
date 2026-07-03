@@ -7,7 +7,9 @@ edition = "2021"
 
 [lib]
 name = "stfu_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# staticlib/cdylib solo se necesitan para mobile; en Windows el archiver
+# choca con el escaneo de Defender sobre los temp-archive
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

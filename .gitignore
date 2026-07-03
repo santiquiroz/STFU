@@ -52,3 +52,5 @@ driver/**/*.pdb
 driver/**/x64/
 
 apo/build/
+backend/dist/
+backend/build/

@@ -8,8 +8,18 @@ use tauri_plugin_log::{Target, TargetKind};
 
 struct BackendProcess(Mutex<Option<Child>>);
 
-fn backend_command() -> Option<Command> {
-    // 1) binario empaquetado junto al exe (build de instalador)
+fn backend_command(app: &tauri::AppHandle) -> Option<Command> {
+    // 1) binario empaquetado en resources (build de instalador)
+    if let Ok(res_dir) = app.path().resource_dir() {
+        let packaged = res_dir.join("backend/stfu-backend/stfu-backend.exe");
+        if packaged.exists() {
+            log::info!("backend: usando binario empaquetado {:?}", packaged);
+            let mut cmd = Command::new(&packaged);
+            cmd.current_dir(packaged.parent().unwrap());
+            return Some(cmd);
+        }
+    }
+    // 1b) binario junto al exe (layout alternativo)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             let packaged = dir.join("stfu-backend.exe");
@@ -32,8 +42,8 @@ fn backend_command() -> Option<Command> {
     None
 }
 
-fn spawn_backend(state: &BackendProcess) {
-    let Some(mut cmd) = backend_command() else {
+fn spawn_backend(app: &tauri::AppHandle, state: &BackendProcess) {
+    let Some(mut cmd) = backend_command(app) else {
         log::warn!("backend no encontrado (ni empaquetado ni venv dev) — inicia uvicorn manualmente");
         return;
     };
@@ -101,7 +111,7 @@ pub fn run() {
         )
         .manage(BackendProcess(Mutex::new(None)))
         .setup(|app| {
-            spawn_backend(app.state::<BackendProcess>().inner());
+            spawn_backend(app.handle(), app.state::<BackendProcess>().inner());
             setup_tray(app)?;
             Ok(())
         })
