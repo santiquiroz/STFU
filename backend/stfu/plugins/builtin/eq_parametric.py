@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.signal import iirpeak, sosfilt
+from scipy.signal import sosfilt
 from stfu.core.audio_format import AudioFormat
 from stfu.plugins.base import AudioPlugin, Parameter
 
@@ -12,15 +12,32 @@ _DEFAULTS = [
 ]
 
 
+def _peaking_sos(freq: float, gain_db: float, q: float, fs: float) -> np.ndarray:
+    """Biquad peaking-EQ (RBJ Audio EQ Cookbook): boost/cut en la banda,
+    unidad de ganancia fuera de ella."""
+    a_lin = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * freq / fs
+    alpha = np.sin(w0) / (2.0 * q)
+    cos_w0 = np.cos(w0)
+    b0 = 1.0 + alpha * a_lin
+    b1 = -2.0 * cos_w0
+    b2 = 1.0 - alpha * a_lin
+    a0 = 1.0 + alpha / a_lin
+    a1 = -2.0 * cos_w0
+    a2 = 1.0 - alpha / a_lin
+    return np.array([b0 / a0, b1 / a0, b2 / a0, 1.0, a1 / a0, a2 / a0])
+
+
 class EQParametricPlugin(AudioPlugin):
     name = "EQ Paramétrico"
-    version = "1.0.0"
+    version = "2.0.0"
 
     def __init__(self) -> None:
         self._bands = [dict(b) for b in _DEFAULTS]
         self._sample_rate = 48000
         self._channels = 1
-        self._sos: list = []
+        self._sos: np.ndarray | None = None
+        self._zi: np.ndarray | None = None
 
     @property
     def preferred_format(self) -> AudioFormat:
@@ -33,14 +50,14 @@ class EQParametricPlugin(AudioPlugin):
         return fmt
 
     def process(self, audio: np.ndarray) -> np.ndarray:
-        out = audio.copy()
-        for sos in self._sos:
-            for ch in range(out.shape[1]):
-                out[:, ch] = sosfilt(sos, out[:, ch])
-        return out
+        if self._sos is None:
+            return audio
+        out, self._zi = sosfilt(self._sos, audio, axis=0, zi=self._zi)
+        return out.astype(np.float32)
 
     def teardown(self) -> None:
-        self._sos.clear()
+        self._sos = None
+        self._zi = None
 
     @property
     def algorithmic_latency_ms(self) -> float:
@@ -68,14 +85,16 @@ class EQParametricPlugin(AudioPlugin):
         self._build_filters()
 
     def _build_filters(self) -> None:
-        self._sos = []
         nyq = self._sample_rate / 2.0
-        for b in self._bands:
-            if b["gain_db"] == 0.0:
-                continue
-            w0 = b["freq"] / nyq
-            if w0 >= 1.0:
-                continue
-            bcoef, acoef = iirpeak(w0, b["q"])
-            g = 10 ** (b["gain_db"] / 20.0)
-            self._sos.append(np.array([[bcoef[0] * g, bcoef[1] * g, bcoef[2] * g, 1.0, acoef[1], acoef[2]]]))
+        sections = [
+            _peaking_sos(b["freq"], b["gain_db"], b["q"], self._sample_rate)
+            for b in self._bands
+            if b["gain_db"] != 0.0 and b["freq"] < nyq
+        ]
+        if not sections:
+            self._sos = None
+            self._zi = None
+            return
+        self._sos = np.stack(sections)
+        # estado se resetea al cambiar parámetros: transitorio breve aceptable
+        self._zi = np.zeros((self._sos.shape[0], 2, self._channels))

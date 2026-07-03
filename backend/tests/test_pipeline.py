@@ -71,9 +71,10 @@ def test_clear_resets_to_passthrough():
     audio = np.ones((960, 1), dtype=np.float32)
     np.testing.assert_array_equal(p.process(audio), audio)
 
-def test_pipeline_returns_correct_shape_when_adapter_buffers():
+def test_pipeline_returns_stream_format_shape_when_adapter_buffers():
     # Input: 480 stereo samples. Plugin wants: 960 mono samples.
-    # After one 480-sample block, adapter has 480 samples < 960 → yields nothing.
+    # Mientras el adapter acumula, el pipeline emite silencio EN EL FORMATO
+    # DEL STREAM (contrato con capture.py), no en el formato del plugin.
     fmt_in = AudioFormat(48000, 2, 480)
     fmt_out = AudioFormat(48000, 1, 960)
 
@@ -86,5 +87,46 @@ def test_pipeline_returns_correct_shape_when_adapter_buffers():
         audio = np.zeros((480, 2), dtype=np.float32)
         result = pipeline.process(audio)
 
-    assert result.shape == (960, 1), f"Expected (960, 1), got {result.shape}"
+    assert result.shape == (480, 2), f"Expected (480, 2), got {result.shape}"
     assert result.dtype == np.float32
+
+
+def test_pipeline_no_data_loss_when_adapter_splits_chunks():
+    # Plugin quiere chunks de 480; el stream entrega 960 → el adapter emite
+    # 2 chunks por llamada. El código viejo botaba el segundo (chunks[0]).
+    fmt_in = AudioFormat(48000, 1, 960)
+    fmt_plugin = AudioFormat(48000, 1, 480)
+
+    gain = _GainPlugin(gain=2.0)
+    pipeline = Pipeline()
+    pipeline.add_plugin(gain)
+
+    with patch.object(type(gain), "preferred_format", new_callable=PropertyMock, return_value=fmt_plugin):
+        pipeline.compile(fmt_in)
+        audio = np.ones((960, 1), dtype=np.float32)
+        result = pipeline.process(audio)
+
+    assert result.shape == (960, 1)
+    np.testing.assert_array_almost_equal(result, audio * 2.0)
+
+
+def test_pipeline_output_adapted_back_to_stream_format():
+    # Plugin de 16k: la salida debe volver al formato del stream (48k/960)
+    # y, pasado el priming del resampler, transportar señal real.
+    pipeline = Pipeline()
+    pipeline.add_plugin(_Format16kPlugin())
+    fmt = AudioFormat(48000, 1, 960)
+    pipeline.compile(fmt)
+
+    fs, freq = 48000, 440.0
+    outputs = []
+    for i in range(30):
+        t = (np.arange(960) + i * 960) / fs
+        chunk = np.sin(2 * np.pi * freq * t).astype(np.float32).reshape(-1, 1)
+        out = pipeline.process(chunk)
+        assert out.shape == (960, 1)
+        assert out.dtype == np.float32
+        outputs.append(out)
+
+    tail_energy = float(np.sqrt(np.mean(np.concatenate(outputs[10:]) ** 2)))
+    assert tail_energy > 0.1  # señal presente, no ceros perpetuos

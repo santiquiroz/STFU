@@ -1,15 +1,25 @@
-from math import gcd
 from typing import Iterator
 import numpy as np
-from scipy.signal import resample_poly
+import soxr
 from stfu.core.audio_format import AudioFormat
 
 
 class FormatAdapter:
+    """Convierte entre AudioFormats: canales, sample rate y rechunking.
+
+    El resampler mantiene estado FIR entre llamadas (soxr.ResampleStream):
+    resamplear chunk a chunk sin estado produce clicks en cada borde.
+    """
+
     def __init__(self, src: AudioFormat, dst: AudioFormat) -> None:
         self._src = src
         self._dst = dst
         self._buffer = np.empty((0, dst.channels), dtype=np.float32)
+        self._resampler: soxr.ResampleStream | None = None
+        if src.sample_rate != dst.sample_rate:
+            self._resampler = soxr.ResampleStream(
+                src.sample_rate, dst.sample_rate, dst.channels, dtype="float32"
+            )
 
     def convert(self, audio: np.ndarray) -> Iterator[np.ndarray]:
         chunk = self._convert_channels(audio)
@@ -26,11 +36,10 @@ class FormatAdapter:
         raise ValueError(f"Unsupported channel conversion: {self._src.channels}→{self._dst.channels}")
 
     def _resample(self, audio: np.ndarray) -> np.ndarray:
-        if self._src.sample_rate == self._dst.sample_rate:
+        if self._resampler is None:
             return audio
-        g = gcd(self._dst.sample_rate, self._src.sample_rate)
-        resampled = resample_poly(audio, self._dst.sample_rate // g, self._src.sample_rate // g, axis=0)
-        return resampled.astype(np.float32)
+        out = self._resampler.resample_chunk(np.ascontiguousarray(audio))
+        return out.reshape(-1, self._dst.channels)
 
     def _rechunk(self, audio: np.ndarray) -> Iterator[np.ndarray]:
         self._buffer = np.concatenate([self._buffer, audio], axis=0)
@@ -41,5 +50,6 @@ class FormatAdapter:
 
     @property
     def buffering_latency_ms(self) -> float:
-        extra = max(0, self._dst.chunk_samples - self._src.chunk_samples)
-        return extra / self._dst.sample_rate * 1000.0
+        src_ms = self._src.chunk_samples / self._src.sample_rate * 1000.0
+        dst_ms = self._dst.chunk_samples / self._dst.sample_rate * 1000.0
+        return max(0.0, dst_ms - src_ms)

@@ -27,11 +27,41 @@ def test_stereo_to_mono():
     chunks = list(FormatAdapter(src, dst).convert(_audio(960, 2)))
     assert chunks[0].shape == (960, 1)
 
-def test_resample_48k_to_16k():
+def test_resample_48k_to_16k_streaming():
+    # Resampler con estado: el primer chunk retiene el delay del filtro,
+    # pero todo chunk emitido tiene el tamaño destino y no se pierde audio.
     src = AudioFormat(48000, 1, 960)   # 20ms @ 48k
     dst = AudioFormat(16000, 1, 320)   # 20ms @ 16k
-    chunks = list(FormatAdapter(src, dst).convert(_audio(960, 1)))
-    assert chunks[0].shape == (320, 1)
+    adapter = FormatAdapter(src, dst)
+    chunks = []
+    for _ in range(5):
+        chunks.extend(adapter.convert(_audio(960, 1)))
+    assert all(c.shape == (320, 1) for c in chunks)
+    total = sum(len(c) for c in chunks)
+    assert 4 * 320 <= total <= 5 * 320
+
+
+def test_resample_no_boundary_clicks():
+    # Seno continuo procesado por chunks: sin estado entre chunks aparecen
+    # discontinuidades en cada borde; con estado la señal queda suave.
+    src = AudioFormat(48000, 1, 960)
+    dst = AudioFormat(44100, 1, 882)
+    adapter = FormatAdapter(src, dst)
+    fs, freq = 48000, 1000.0
+    out = []
+    for i in range(20):
+        t = (np.arange(960) + i * 960) / fs
+        chunk = np.sin(2 * np.pi * freq * t).astype(np.float32).reshape(-1, 1)
+        out.extend(c[:, 0] for c in adapter.convert(chunk))
+    signal = np.concatenate(out)
+    max_theoretical_step = 2 * np.pi * freq / 44100  # derivada máx del seno
+    assert np.max(np.abs(np.diff(signal))) < max_theoretical_step * 1.5
+
+
+def test_no_buffering_latency_when_durations_match_across_rates():
+    src = AudioFormat(16000, 1, 320)   # 20ms
+    dst = AudioFormat(48000, 1, 960)   # 20ms
+    assert FormatAdapter(src, dst).buffering_latency_ms == pytest.approx(0.0)
 
 def test_rechunk_accumulates_until_target():
     src = AudioFormat(48000, 1, 960)
