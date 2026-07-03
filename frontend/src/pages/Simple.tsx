@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
 import { api } from "../services/api";
@@ -7,18 +7,27 @@ import { api } from "../services/api";
 function Toggle({
   on,
   loading,
+  disabled,
   onChange,
 }: {
   on: boolean;
   loading: boolean;
+  disabled?: boolean;
   onChange: (v: boolean) => void;
 }) {
+  const blocked = loading || disabled;
   return (
     <button
-      onClick={() => !loading && onChange(!on)}
-      disabled={loading}
+      onClick={() => !blocked && onChange(!on)}
+      disabled={blocked}
       className={`w-12 h-6 rounded-full transition-colors ${
-        loading ? "bg-zinc-500 cursor-wait" : on ? "bg-green-500" : "bg-zinc-600"
+        loading
+          ? "bg-zinc-500 cursor-wait"
+          : disabled
+            ? "bg-zinc-700 cursor-not-allowed opacity-50"
+            : on
+              ? "bg-green-500"
+              : "bg-zinc-600"
       }`}
     >
       {loading ? (
@@ -35,6 +44,7 @@ function Toggle({
 }
 
 export function Simple() {
+  const queryClient = useQueryClient();
   const [micOn, setMicOn] = useState(false);
   const [micBusy, setMicBusy] = useState(false);
   const [strength, setStrength] = useState(85);
@@ -44,7 +54,7 @@ export function Simple() {
 
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
-  const { data: feeder } = useQuery({
+  const { data: feeder, isError: backendDown } = useQuery({
     queryKey: ["feeder-status"],
     queryFn: api.getFeederStatus,
     refetchInterval: 2000,
@@ -57,8 +67,11 @@ export function Simple() {
 
   const inputs = devices.filter((d) => d.channels_in > 0);
   const outputs = devices.filter((d) => d.channels_out > 0);
-  const effectiveInput = selectedInput ?? inputs[0]?.id ?? 0;
-  const effectiveTestOut = selectedTestOut ?? outputs[0]?.id ?? 0;
+  const hasInput = inputs.length > 0;
+  // Sin fallback a id 0: un id inventado arranca el feeder contra un device
+  // inexistente. undefined => el toggle queda deshabilitado.
+  const effectiveInput = selectedInput ?? inputs[0]?.id;
+  const effectiveTestOut = selectedTestOut ?? outputs[0]?.id;
   const bridgePresent = feeder?.bridge_present ?? false;
 
   function extractError(e: unknown): string {
@@ -71,16 +84,26 @@ export function Simple() {
 
   async function handleMicToggle(next: boolean) {
     setMicError(null);
+    if (next && effectiveInput === undefined) {
+      setMicError("No se detectó ningún micrófono.");
+      return;
+    }
+    if (next && !bridgePresent && effectiveTestOut === undefined) {
+      setMicError("No hay dispositivo de salida para la prueba.");
+      return;
+    }
     setMicBusy(true);
     try {
       if (next) {
         // Con driver: sale al STFU Audio Bridge. Sin driver: modo prueba por parlantes.
-        await api.startFeeder(effectiveInput, strength / 100, bridgePresent ? undefined : effectiveTestOut);
+        await api.startFeeder(effectiveInput!, strength / 100, bridgePresent ? undefined : effectiveTestOut);
         setMicOn(true);
       } else {
         await api.stopFeeder();
         setMicOn(false);
       }
+      // Refresca el estado real sin esperar al poll de 2s.
+      queryClient.invalidateQueries({ queryKey: ["feeder-status"] });
     } catch (e) {
       setMicOn(false);
       setMicError(extractError(e));
@@ -93,8 +116,8 @@ export function Simple() {
     if (!micOn) return;
     try {
       await api.setFeederParameter(0, "strength", strength / 100);
-    } catch {
-      /* reintenta al re-activar */
+    } catch (e) {
+      setMicError(extractError(e));
     }
   }
 
@@ -107,35 +130,45 @@ export function Simple() {
         <p className="text-zinc-500 text-xs">Suppress The Frustrating Unwanted noise</p>
       </div>
 
-      {/* Estado del driver */}
-      <div
-        className={`rounded-lg px-3 py-2 text-xs ${
-          bridgePresent ? "bg-green-950 text-green-300" : "bg-amber-950 text-amber-300"
-        }`}
-      >
-        {bridgePresent
-          ? "✓ STFU Microphone instalado — selecciónalo en Discord/Zoom para recibir audio limpio."
-          : "⚠ Driver STFU no instalado — modo prueba: te escuchas limpio por los parlantes."}
-      </div>
+      {/* Estado del backend / driver */}
+      {backendDown ? (
+        <div className="rounded-lg px-3 py-2 text-xs bg-red-950 text-red-300">
+          ⚠ Sin conexión con el backend de STFU. Verifica que el servicio esté corriendo.
+        </div>
+      ) : (
+        <div
+          className={`rounded-lg px-3 py-2 text-xs ${
+            bridgePresent ? "bg-green-950 text-green-300" : "bg-amber-950 text-amber-300"
+          }`}
+        >
+          {bridgePresent
+            ? "✓ STFU Microphone instalado — selecciónalo en Discord/Zoom para recibir audio limpio."
+            : "⚠ Driver STFU no instalado — modo prueba: te escuchas limpio por los parlantes."}
+        </div>
+      )}
 
       {/* Mic */}
       <div className="bg-zinc-800 rounded-xl p-5 flex flex-col gap-4">
         <div className="flex items-center justify-between">
           <div>
             <p className="font-medium text-sm">🎙 Micrófono</p>
-            <select
-              className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
-              value={effectiveInput}
-              onChange={(e) => setSelectedInput(Number(e.target.value))}
-            >
-              {inputs.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            {hasInput ? (
+              <select
+                className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
+                value={effectiveInput}
+                onChange={(e) => setSelectedInput(Number(e.target.value))}
+              >
+                {inputs.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <p className="mt-1 text-xs text-amber-400">No se detectó ningún micrófono.</p>
+            )}
           </div>
-          <Toggle on={micOn} loading={micBusy} onChange={handleMicToggle} />
+          <Toggle on={micOn} loading={micBusy} disabled={!hasInput && !micOn} onChange={handleMicToggle} />
         </div>
 
         {micError && (
@@ -158,7 +191,7 @@ export function Simple() {
           />
         </div>
 
-        {!bridgePresent && (
+        {!bridgePresent && !backendDown && (
           <div>
             <p className="text-xs text-zinc-400 mb-1">Escuchar prueba en:</p>
             <select
