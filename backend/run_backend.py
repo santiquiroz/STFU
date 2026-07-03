@@ -2,9 +2,21 @@
 import sys
 
 
+def _hide_console() -> None:
+    """Oculta la consola del helper elevado (no confundir al tester)."""
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
+
+
 def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "--apo-admin":
         # modo helper elevado: operación APO en HKLM y salir
+        _hide_console()
         from stfu.apo.admin_cli import main as admin_main
         sys.exit(admin_main(sys.argv[2:]))
 

@@ -82,7 +82,8 @@ def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
     fabricante del dispositivo.
     """
     dll = _stage_apo_dll()
-    subprocess.run(["regsvr32", "/s", str(dll)], check=True)
+    subprocess.run(["regsvr32", "/s", str(dll)], check=True,
+                   stdin=subprocess.DEVNULL, timeout=30)
 
     path = _fx_props_path(endpoint_guid, flow)
     prop = _clsid_prop(flow)
@@ -162,5 +163,19 @@ def enable_unsigned_apos() -> None:
 
 
 def _restart_audio_service() -> None:
-    subprocess.run(["net", "stop", "audiosrv"], check=False, capture_output=True)
-    subprocess.run(["net", "start", "audiosrv"], check=True, capture_output=True)
+    """Reinicia audiosrv para que audiodg recargue el APO.
+
+    `net stop audiosrv` PIDE confirmación de servicios dependientes por stdin
+    y cuelga para siempre sin consola interactiva. Restart-Service -Force los
+    maneja sin prompt; stdin cerrado + timeout garantizan que nunca se cuelgue.
+    """
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+             "Restart-Service -Name Audiosrv -Force -ErrorAction Stop"],
+            check=False, capture_output=True,
+            stdin=subprocess.DEVNULL, timeout=90,
+        )
+    except subprocess.TimeoutExpired:
+        _log.warning("Restart-Service audiosrv excedió el timeout; el APO se "
+                     "aplicará en la próxima sesión de audio")
