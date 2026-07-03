@@ -1,15 +1,20 @@
 import logging
 import queue
+import threading
 import time
 import numpy as np
+import samplerate
 import sounddevice as sd
 from stfu.core.audio_format import AudioFormat
 from stfu.core.pipeline import Pipeline
+from stfu.audio.transport import RingBuffer, DriftServo
 
 _log = logging.getLogger(__name__)
 
-_OUTPUT_QUEUE_SIZE = 8
-_PREFILL_CHUNKS = 2
+_INPUT_QUEUE_CHUNKS = 8
+_RING_CHUNKS = 8
+_TARGET_FILL_CHUNKS = 2
+_SERVO_UPDATE_EVERY_CHUNKS = 250  # ~5s con chunks de 20ms
 
 
 def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
@@ -24,12 +29,12 @@ def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
 
 
 class CaptureThread:
-    """Captures audio from input device, runs pipeline, plays back on output device.
+    """Captura → pipeline (worker thread) → ring → reproducción.
 
-    Both streams open at the engine's canonical format; WASAPI auto-convert
-    performs SRC for devices with different native rates (192kHz mic, 44.1kHz
-    output, etc). If the output stream fails to open, processing continues
-    without playback and playback_active reports False.
+    Los callbacks de PortAudio solo copian memoria: el pipeline (incluida la
+    inferencia) corre en un worker propio. Entre worker y salida hay un ring
+    con servo de drift: dos dispositivos tienen relojes independientes y sin
+    corrección ppm el buffer se vacía/llena cada pocos minutos.
     """
 
     def __init__(
@@ -47,7 +52,12 @@ class CaptureThread:
         self._out_channels = out_channels if out_channels is not None else fmt.channels
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
-        self._queue: queue.Queue = queue.Queue(maxsize=_OUTPUT_QUEUE_SIZE)
+        self._in_queue: queue.Queue = queue.Queue(maxsize=_INPUT_QUEUE_CHUNKS)
+        self._ring: RingBuffer | None = None
+        self._servo: DriftServo | None = None
+        self._resampler: samplerate.Resampler | None = None
+        self._worker: threading.Thread | None = None
+        self._stop_event = threading.Event()
         self._latency_ms: float = 0.0
         self._input_overflows: int = 0
         self._output_underflows: int = 0
@@ -55,7 +65,14 @@ class CaptureThread:
 
     def start(self) -> None:
         self._pipeline.compile(self._fmt)
-        self._prefill_queue()
+        chunk = self._fmt.chunk_samples
+        self._ring = RingBuffer(capacity=_RING_CHUNKS * chunk, channels=self._out_channels)
+        self._ring.write(np.zeros((_TARGET_FILL_CHUNKS * chunk, self._out_channels), dtype=np.float32))
+        self._servo = DriftServo(target_fill=_TARGET_FILL_CHUNKS * chunk)
+        self._resampler = samplerate.Resampler("sinc_fastest", channels=self._out_channels)
+        self._stop_event.clear()
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
 
         try:
             self._output_stream = sd.OutputStream(
@@ -63,7 +80,7 @@ class CaptureThread:
                 samplerate=self._fmt.sample_rate,
                 channels=self._out_channels,
                 dtype=self._fmt.dtype,
-                blocksize=self._fmt.chunk_samples,
+                blocksize=chunk,
                 latency="low",
                 extra_settings=_wasapi_auto_convert(),
                 callback=self._output_callback,
@@ -79,7 +96,7 @@ class CaptureThread:
                 samplerate=self._fmt.sample_rate,
                 channels=self._fmt.channels,
                 dtype=self._fmt.dtype,
-                blocksize=self._fmt.chunk_samples,
+                blocksize=chunk,
                 latency="low",
                 extra_settings=_wasapi_auto_convert(),
                 callback=self._input_callback,
@@ -98,37 +115,48 @@ class CaptureThread:
             self._output_stream.stop()
             self._output_stream.close()
             self._output_stream = None
+        self._stop_event.set()
+        if self._worker:
+            self._worker.join(timeout=2.0)
+            self._worker = None
 
-    def _prefill_queue(self) -> None:
-        silence = np.zeros((self._fmt.chunk_samples, self._out_channels), dtype=np.float32)
-        for _ in range(_PREFILL_CHUNKS):
-            self._queue.put_nowait(silence.copy())
+    def _worker_loop(self) -> None:
+        chunks_since_update = 0
+        while not self._stop_event.is_set():
+            try:
+                chunk = self._in_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            t0 = time.perf_counter()
+            processed = self._pipeline.process(chunk)
+            self._latency_ms = (time.perf_counter() - t0) * 1000.0
+            if self._output_stream is None:
+                continue
+            out = _adjust_channels(processed, self._out_channels)
+            resampled = self._resampler.process(out, self._servo.ratio).astype(np.float32, copy=False)
+            self._ring.write(resampled.reshape(-1, self._out_channels))
+            self._servo.observe(self._ring.fill)
+            chunks_since_update += 1
+            if chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
+                self._servo.update()
+                chunks_since_update = 0
 
     def _input_callback(
         self, indata: np.ndarray, frames: int, time_info, status
     ) -> None:
         if status and status.input_overflow:
             self._input_overflows += 1
-        t0 = time.perf_counter()
-        processed = self._pipeline.process(indata.copy())
-        if self._output_stream is not None:
-            try:
-                self._queue.put_nowait(processed)
-            except queue.Full:
-                self._queue_drops += 1
-        self._latency_ms = (time.perf_counter() - t0) * 1000.0
+        try:
+            self._in_queue.put_nowait(indata.copy())
+        except queue.Full:
+            self._queue_drops += 1
 
     def _output_callback(
         self, outdata: np.ndarray, frames: int, time_info, status
     ) -> None:
         if status and status.output_underflow:
             self._output_underflows += 1
-        try:
-            audio = self._queue.get_nowait()
-            _write_to_output(audio, outdata)
-        except queue.Empty:
-            self._output_underflows += 1
-            outdata[:] = 0
+        outdata[:] = self._ring.read(frames)
 
     @property
     def measured_latency_ms(self) -> float:
@@ -143,19 +171,11 @@ class CaptureThread:
         return {
             "playback_active": self.playback_active,
             "input_overflows": self._input_overflows,
-            "output_underflows": self._output_underflows,
-            "queue_drops": self._queue_drops,
-            "queue_fill": self._queue.qsize(),
+            "output_underflows": self._output_underflows + (self._ring.underflows if self._ring else 0),
+            "queue_drops": self._queue_drops + (self._ring.overflows if self._ring else 0),
+            "ring_fill": self._ring.fill if self._ring else 0,
+            "drift_ppm": round(self._servo.ppm, 2) if self._servo else 0.0,
         }
-
-
-def _write_to_output(processed: np.ndarray, outdata: np.ndarray) -> None:
-    out_ch = outdata.shape[1]
-    # Trim or pad to expected frame count (may differ by ±1 due to rounding).
-    n = min(processed.shape[0], outdata.shape[0])
-    outdata[:n] = _adjust_channels(processed[:n], out_ch)
-    if n < outdata.shape[0]:
-        outdata[n:] = 0
 
 
 def _adjust_channels(audio: np.ndarray, out_ch: int) -> np.ndarray:
