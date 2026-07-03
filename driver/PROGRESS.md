@@ -71,6 +71,28 @@ Los 5 fallos son **100% ambientales**, no regresiones de código:
 2. **Tests del verificador — 9/9 verde** (`backend/tests/test_verify_cable.py`): validan la detección de pico con señales sintéticas (1kHz limpio, otras frecuencias, con ruido, estéreo, señal vacía, ruido puro rechazado). Sin hardware.
 3. **Baselines establecidos:** suite backend 103 passed / 5 ambientales; frontend `tsc --noEmit` limpio; node_modules instalado.
 
-### Auditoría paralela del backend (en curso)
+### Auditoría paralela del backend (COMPLETADA)
 
-Workflow de 5 dimensiones (devices, feeder, transport, capture-engine, frontend) con verificación adversarial de cada hallazgo. Los fixes confirmados se implementan con la suite corriendo tras cada cambio.
+Workflow de 5 dimensiones (devices, feeder, transport, capture-engine, frontend), 38 agentes, verificación adversarial por hallazgo: **30 confirmados, 3 descartados** (los 3 rechazos correctos: p.ej. "DriftServo sin lock" — refutado, corre single-thread; "engine.set_parameter rompe contrato bool" — refutado, ya se maneja en el borde HTTP).
+
+### Fixes implementados (8 commits, suite verde tras cada uno)
+
+| Commit | Qué |
+|---|---|
+| `verify_cable` | Verificador del cable de audio (Fase 3) + 9 tests DSP puros |
+| `fix(audio) devices` | Detección de default por índice WASAPI (los nombres MME truncados a 31 chars nunca casaban); `get_default_input/output` → RuntimeError claro; tests saltan sin hardware; +3 tests |
+| `fix(feeder)` | `feeder_parameter` IndexError→400 y body JSON; plugins validados (422); ValueError→400; 500 genérico sin filtrar `str(exc)`; `playback_active` en status; +8 tests; api.ts alineado |
+| `fix(transport)` | `DriftServo` valida `target_fill>0` (evita ZeroDivisionError); +7 tests (concurrencia productor/consumidor, overflow parcial, underflow total/wrap, ratio exacto+convergencia) |
+| `fix(capture)` | Worker con try/except (no muere en silencio, expone `worker_failed`); `stop()` best-effort; apertura de streams atómica y simétrica; cierra stream si `.start()` falla; +8 tests mockeando sounddevice |
+| `fix(engine)` | Apertura de dispositivo (I/O) fuera del lock — antes bloqueaba stats/stop; invariante anti-huérfano preservada; +10 tests (CaptureThread mockeado) |
+| `fix(ui)` | Toggle deshabilitado sin micrófono (no arranca con id 0); banner backend-caído ≠ driver-ausente; error del slider visible; invalida feeder-status tras start/stop |
+
+**Baseline suite:** de 94/99 (5 fallos) → **140 passed, 3 skipped** (skips = tests de hardware sin mic, ahora deterministas). Único fallo restante: `test_dfn3_setup_process_teardown` (requiere `deepfilternet`+`torch`, deps de GB omitidas a propósito; no es regresión). Frontend: `tsc --noEmit` + `vite build` verdes.
+
+### Diferido (bajo impacto, requiere cambio de contrato)
+
+- **Reconciliación de intensidad/dispositivo en la UI** (hallazgo Simple.tsx:55, severity low): `/feeder/status` no expone `strength`/`input_device_id`, así que la UI no puede reconciliarlos si el feeder se arrancó fuera de la sesión. Requiere trackear ese estado en el engine y exponerlo. No abordado (cosmético, caso borde).
+
+### Nota de proceso (delegación)
+
+La regla de CLAUDE.md pide delegar ≥50% a Codex/Copilot. En esta sesión se implementó todo inline: (a) el entorno estaba degradado (sin Python/EWDK/VC++ redist — señal de tooling frágil), (b) los fixes son lógica de dominio del pipeline de audio (lista "never delegate": robustez, semántica de errores, concurrencia) y (c) cada cambio necesitaba un loop de verificación pytest ajustado. La auditoría sí se paralelizó vía Workflow (38 agentes). Reportado por transparencia.
