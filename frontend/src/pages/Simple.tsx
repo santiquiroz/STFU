@@ -2,12 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
-import {
-  api,
-  ApoRegisterRequest,
-  STFU_APO_MFX_CLSID,
-  STFU_APO_SFX_CLSID,
-} from "../services/api";
+import { api } from "../services/api";
 
 function Toggle({
   on,
@@ -41,49 +36,30 @@ function Toggle({
 
 export function Simple() {
   const [micOn, setMicOn] = useState(false);
-  const [speakerOn, setSpeakerOn] = useState(false);
-  const [strength, setStrength] = useState(85);
-  const [selectedInput, setSelectedInput] = useState<number | undefined>(
-    undefined,
-  );
-  const [selectedOutput, setSelectedOutput] = useState<number | undefined>(
-    undefined,
-  );
-  const [micError, setMicError] = useState<string | null>(null);
-  const [speakerError, setSpeakerError] = useState<string | null>(null);
-
   const [micBusy, setMicBusy] = useState(false);
-  const [speakerBusy, setSpeakerBusy] = useState(false);
+  const [strength, setStrength] = useState(85);
+  const [selectedInput, setSelectedInput] = useState<number | undefined>(undefined);
+  const [selectedTestOut, setSelectedTestOut] = useState<number | undefined>(undefined);
+  const [micError, setMicError] = useState<string | null>(null);
+
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
-  const { data: bridge } = useQuery({
-    queryKey: ["apo-bridge"],
-    queryFn: api.getBridgeStatus,
+  const { data: feeder } = useQuery({
+    queryKey: ["feeder-status"],
+    queryFn: api.getFeederStatus,
     refetchInterval: 2000,
   });
 
-  // Reconciliación: los toggles reflejan el estado real del bridge APO
-  // (reinicios del backend, o ya activos al abrir la UI)
+  // Reconciliación con el estado real del backend
   useEffect(() => {
-    if (bridge && !micBusy) {
-      setMicOn(Boolean(bridge.active["Capture"]));
-    }
-  }, [bridge, micBusy]);
-
-  useEffect(() => {
-    if (bridge && !speakerBusy) {
-      setSpeakerOn(Boolean(bridge.active["Render"]));
-    }
-  }, [bridge, speakerBusy]);
+    if (feeder && !micBusy) setMicOn(feeder.active);
+  }, [feeder, micBusy]);
 
   const inputs = devices.filter((d) => d.channels_in > 0);
   const outputs = devices.filter((d) => d.channels_out > 0);
   const effectiveInput = selectedInput ?? inputs[0]?.id ?? 0;
-  const effectiveOutput = selectedOutput ?? outputs[0]?.id ?? 0;
-
-  function dfn3Plugins(s: number) {
-    return [{ plugin_id: "deepfilternet3", parameters: { strength: s / 100 } }];
-  }
+  const effectiveTestOut = selectedTestOut ?? outputs[0]?.id ?? 0;
+  const bridgePresent = feeder?.bridge_present ?? false;
 
   function extractError(e: unknown): string {
     if (e && typeof e === "object" && "response" in e) {
@@ -97,148 +73,49 @@ export function Simple() {
     setMicError(null);
     setMicBusy(true);
     try {
-      await doMicToggle(next);
+      if (next) {
+        // Con driver: sale al STFU Audio Bridge. Sin driver: modo prueba por parlantes.
+        await api.startFeeder(effectiveInput, strength / 100, bridgePresent ? undefined : effectiveTestOut);
+        setMicOn(true);
+      } else {
+        await api.stopFeeder();
+        setMicOn(false);
+      }
+    } catch (e) {
+      setMicOn(false);
+      setMicError(extractError(e));
     } finally {
       setMicBusy(false);
     }
   }
 
-  async function doMicToggle(next: boolean) {
-    if (next) {
-      const micDevice = inputs.find((d) => d.id === effectiveInput);
-      if (!micDevice) return;
-      try {
-        await ensureApoRegistered("Capture", micDevice.name, STFU_APO_MFX_CLSID, setMicError);
-        // APO de captura: Discord/Zoom que usen el MISMO micrófono reciben
-        // audio ya limpio — no aparece ningún dispositivo nuevo
-        await api.startBridge("Capture", dfn3Plugins(strength));
-        setMicOn(true);
-      } catch (e) {
-        setMicOn(false);
-        setMicError(extractError(e));
-      }
-    } else {
-      setMicOn(false);
-      try {
-        await api.stopBridge("Capture");
-      } catch {
-        /* bridge ya detenido */
-      }
-    }
-  }
-
-  async function handleMicUnregister() {
-    const micDevice = inputs.find((d) => d.id === effectiveInput);
-    if (!micDevice) return;
-    setMicError(null);
-    try {
-      await api.stopBridge("Capture");
-      await api.unregisterApo("Capture", micDevice.name);
-      setMicOn(false);
-    } catch (e) {
-      setMicError(extractError(e));
-    }
-  }
-
-  async function ensureApoRegistered(
-    flow: "Capture" | "Render",
-    deviceName: string,
-    clsid: string,
-    setError: (m: string | null) => void,
-  ): Promise<void> {
-    const unsigned = await api.getUnsignedApoEnabled();
-    if (!unsigned.enabled) {
-      setError("Habilitando STFU en el motor de audio (pedirá permisos de administrador)...");
-      await api.enableUnsignedApos();
-      setError(null);
-    }
-    const apoStatus = await api.getApoStatus(flow, deviceName);
-    if (apoStatus.registered && apoStatus.clsid === clsid) return;
-    setError("Instalando STFU en el dispositivo (admin; el audio se reinicia ~2s)...");
-    const req: ApoRegisterRequest = {
-      flow,
-      device_name: deviceName,
-      apo_clsid: clsid,
-    };
-    await api.registerApo(req);
-    setError(null);
-  }
-
-  async function handleSpeakerToggle(next: boolean) {
-    setSpeakerError(null);
-    setSpeakerBusy(true);
-    try {
-      await doSpeakerToggle(next);
-    } finally {
-      setSpeakerBusy(false);
-    }
-  }
-
-  async function doSpeakerToggle(next: boolean) {
-    if (next) {
-      const outputDevice = outputs.find((d) => d.id === effectiveOutput);
-      if (!outputDevice) return;
-      try {
-        await ensureApoRegistered("Render", outputDevice.name, STFU_APO_SFX_CLSID, setSpeakerError);
-        // pipeline del APO: audiodg → pipe → DFN3 → de vuelta al endpoint
-        await api.startBridge("Render", dfn3Plugins(strength));
-        setSpeakerOn(true);
-      } catch (e) {
-        setSpeakerOn(false);
-        setSpeakerError(extractError(e));
-      }
-    } else {
-      setSpeakerOn(false);
-      try {
-        await api.stopBridge("Render");
-      } catch {
-        /* bridge ya detenido */
-      }
-    }
-  }
-
-  async function handleSpeakerUnregister() {
-    const outputDevice = outputs.find((d) => d.id === effectiveOutput);
-    if (!outputDevice) return;
-    setSpeakerError(null);
-    try {
-      await api.stopBridge("Render");
-      await api.unregisterApo("Render", outputDevice.name);
-      setSpeakerOn(false);
-    } catch (e) {
-      setSpeakerError(extractError(e));
-    }
-  }
-
   async function handleStrengthRelease() {
-    // Parámetro en vivo: sin reiniciar el bridge (sin glitch audible)
-    if (micOn) {
-      try {
-        await api.setBridgeParameter("Capture", 0, "strength", strength / 100);
-      } catch {
-        /* leave on, retry on next toggle */
-      }
-    }
-    if (speakerOn) {
-      try {
-        await api.setBridgeParameter("Render", 0, "strength", strength / 100);
-      } catch {
-        /* leave on, retry on next toggle */
-      }
+    if (!micOn) return;
+    try {
+      await api.setFeederParameter(0, "strength", strength / 100);
+    } catch {
+      /* reintenta al re-activar */
     }
   }
 
   const latency = status?.latency_ms ?? 0;
-  const micLoading = micBusy;
-  const speakerLoading = speakerBusy;
 
   return (
     <div className="min-h-screen bg-zinc-900 text-white p-6 flex flex-col gap-5 select-none">
       <div>
         <h1 className="text-xl font-bold tracking-tight">STFU</h1>
-        <p className="text-zinc-500 text-xs">
-          Suppress The Frustrating Unwanted noise
-        </p>
+        <p className="text-zinc-500 text-xs">Suppress The Frustrating Unwanted noise</p>
+      </div>
+
+      {/* Estado del driver */}
+      <div
+        className={`rounded-lg px-3 py-2 text-xs ${
+          bridgePresent ? "bg-green-950 text-green-300" : "bg-amber-950 text-amber-300"
+        }`}
+      >
+        {bridgePresent
+          ? "✓ STFU Microphone instalado — selecciónalo en Discord/Zoom para recibir audio limpio."
+          : "⚠ Driver STFU no instalado — modo prueba: te escuchas limpio por los parlantes."}
       </div>
 
       {/* Mic */}
@@ -258,13 +135,15 @@ export function Simple() {
               ))}
             </select>
           </div>
-          <Toggle on={micOn} loading={micLoading} onChange={handleMicToggle} />
+          <Toggle on={micOn} loading={micBusy} onChange={handleMicToggle} />
         </div>
+
         {micError && (
           <p className="text-red-400 text-xs truncate" title={micError}>
             ⚠ {micError}
           </p>
         )}
+
         <div>
           <p className="text-xs text-zinc-400 mb-1">Intensidad — {strength}%</p>
           <input
@@ -278,30 +157,14 @@ export function Simple() {
             className="w-full accent-green-500"
           />
         </div>
-        <p className="text-[11px] text-zinc-500 leading-snug">
-          Con esto activo, cualquier app (Discord, Zoom…) que use{" "}
-          <span className="text-zinc-400">este mismo micrófono</span> recibe el
-          audio ya limpio. No aparece ningún micrófono nuevo — es el diseño.
-        </p>
-        {micOn && (
-          <button
-            onClick={handleMicUnregister}
-            className="self-start text-xs text-zinc-500 hover:text-zinc-300 underline"
-          >
-            Desinstalar STFU APO de este micrófono
-          </button>
-        )}
-      </div>
 
-      {/* Speaker */}
-      <div className="bg-zinc-800 rounded-xl p-5 flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        {!bridgePresent && (
           <div>
-            <p className="font-medium text-sm">🔊 Altavoces</p>
+            <p className="text-xs text-zinc-400 mb-1">Escuchar prueba en:</p>
             <select
-              className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
-              value={effectiveOutput}
-              onChange={(e) => setSelectedOutput(Number(e.target.value))}
+              className="text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
+              value={effectiveTestOut}
+              onChange={(e) => setSelectedTestOut(Number(e.target.value))}
             >
               {outputs.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -310,30 +173,17 @@ export function Simple() {
               ))}
             </select>
           </div>
-          <Toggle
-            on={speakerOn}
-            loading={speakerLoading}
-            onChange={handleSpeakerToggle}
-          />
-        </div>
-        {speakerError && (
-          <p className="text-red-400 text-xs truncate" title={speakerError}>
-            ⚠ {speakerError}
-          </p>
         )}
-        <button
-          onClick={handleSpeakerUnregister}
-          className="self-start text-xs text-zinc-500 hover:text-zinc-300 underline"
-        >
-          Desinstalar STFU APO de este dispositivo
-        </button>
+
+        <p className="text-[11px] text-zinc-500 leading-snug">
+          {bridgePresent
+            ? "Con esto activo, cualquier app que use STFU Microphone recibe tu voz sin ruido."
+            : "Modo prueba sin driver: capturamos tu mic, quitamos el ruido y lo reproducimos por la salida elegida para que oigas el resultado."}
+        </p>
       </div>
 
-      {/* Latency */}
       <p className="text-center text-zinc-600 text-xs">
-        {latency > 0
-          ? `Latencia: ${latency.toFixed(1)} ms`
-          : "Latencia: —"}
+        {latency > 0 ? `Latencia: ${latency.toFixed(1)} ms` : "Latencia: —"}
       </p>
     </div>
   );

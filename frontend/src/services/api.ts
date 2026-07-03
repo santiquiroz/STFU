@@ -69,6 +69,42 @@ export const api = {
   getActivePipelines: (): Promise<{ active: string[] }> =>
     client.get("/pipeline/active").then((r) => r.data),
 
+  getFeederStatus: (): Promise<{
+    bridge_present: boolean;
+    bridge_name: string;
+    bridge_device_id: number | null;
+    active: boolean;
+  }> => client.get("/feeder/status").then((r) => r.data),
+
+  startFeeder: (
+    inputDeviceId: number,
+    strength: number,
+    testOutputDeviceId?: number,
+  ): Promise<{ ok: boolean; using_bridge: boolean; output_device_id: number }> =>
+    client
+      .post("/feeder/start", {
+        input_device_id: inputDeviceId,
+        plugins: [
+          { plugin_id: "deepfilternet3", parameters: { strength } },
+        ],
+        test_output_device_id: testOutputDeviceId ?? null,
+      })
+      .then((r) => r.data),
+
+  stopFeeder: (): Promise<{ ok: boolean }> =>
+    client.delete("/feeder/stop").then((r) => r.data),
+
+  setFeederParameter: (
+    pluginIndex: number,
+    parameterId: string,
+    value: number,
+  ): Promise<{ ok: boolean }> =>
+    client
+      .post(
+        `/feeder/parameter?plugin_index=${pluginIndex}&parameter_id=${parameterId}&value=${value}`,
+      )
+      .then((r) => r.data),
+
   setParameter: (
     target: "mic" | "speaker",
     pluginIndex: number,
