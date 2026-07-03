@@ -1,7 +1,8 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from stfu.apo.apo_engine import apo_engine
 from stfu.apo.constants import CLSID_BY_FLOW
 from stfu.apo.endpoint_finder import find_endpoint_guid
@@ -13,13 +14,18 @@ from stfu.apo.register import (
     unregister_apo,
 )
 
+_log = logging.getLogger(__name__)
 router = APIRouter(prefix="/apo", tags=["apo"])
+
+
+_GUID_RE = r"^\{[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}\}$"
 
 
 class ApoRegisterRequest(BaseModel):
     flow: Literal["Capture", "Render"]
     device_name: str      # substring match
-    apo_clsid: str = ""   # vacío = CLSID oficial de STFU para ese flow
+    # vacío = CLSID oficial de STFU para ese flow; si viene, forma GUID estricta
+    apo_clsid: str = Field(default="", pattern=f"(^$)|({_GUID_RE})")
 
 
 class ApoBridgeRequest(BaseModel):
@@ -39,6 +45,16 @@ def apo_status(flow: Literal["Capture", "Render"], device_name: str):
     return get_apo_status(guid, flow)
 
 
+def _needs_elevation(exc: Exception) -> bool:
+    import subprocess
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, subprocess.CalledProcessError):
+        return True  # regsvr32 sin admin
+    winerror = getattr(exc, "winerror", None)
+    return winerror == 5
+
+
 @router.post("/register")
 def apo_register(req: ApoRegisterRequest):
     guid = _resolve_guid(req.device_name, req.flow)
@@ -46,7 +62,15 @@ def apo_register(req: ApoRegisterRequest):
     try:
         register_apo(guid, req.flow, clsid)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        if not _needs_elevation(e):
+            _log.exception("fallo en operacion APO")
+            raise HTTPException(500, str(e))
+        try:
+            from stfu.apo.elevate import run_elevated
+            run_elevated(["register", guid, req.flow, clsid])
+        except Exception as e2:
+            _log.exception("fallo en registro APO elevado")
+            raise HTTPException(500, str(e2))
     return {"ok": True, "endpoint_guid": guid, "clsid": clsid}
 
 
@@ -60,7 +84,15 @@ def unsigned_enable():
     try:
         enable_unsigned_apos()
     except Exception as e:
-        raise HTTPException(500, str(e))
+        if not _needs_elevation(e):
+            _log.exception("fallo en operacion APO")
+            raise HTTPException(500, str(e))
+        try:
+            from stfu.apo.elevate import run_elevated
+            run_elevated(["enable-unsigned"])
+        except Exception as e2:
+            _log.exception("fallo habilitando APOs sin firma (elevado)")
+            raise HTTPException(500, str(e2))
     return {"ok": True, "enabled": True}
 
 
@@ -74,6 +106,7 @@ def bridge_start(flow: Literal["Capture", "Render"], req: ApoBridgeRequest):
     try:
         apo_engine.start(flow, req.plugins)
     except Exception as e:
+        _log.exception("fallo en operacion APO")
         raise HTTPException(500, str(e))
     return {"ok": True, "flow": flow}
 
@@ -107,5 +140,13 @@ def apo_unregister(flow: Literal["Capture", "Render"], device_name: str):
     try:
         unregister_apo(guid, flow)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        if not _needs_elevation(e):
+            _log.exception("fallo en operacion APO")
+            raise HTTPException(500, str(e))
+        try:
+            from stfu.apo.elevate import run_elevated
+            run_elevated(["unregister", guid, flow])
+        except Exception as e2:
+            _log.exception("fallo en unregister APO elevado")
+            raise HTTPException(500, str(e2))
     return {"ok": True}

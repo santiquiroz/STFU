@@ -1,7 +1,10 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from stfu.audio.engine import engine
 
+_log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -32,6 +35,7 @@ def configure_pipeline(target: str, config: PipelineConfig):
         )
         return {"ok": True, "target": target, "active": True, "latency_ms": latency_ms}
     except Exception as exc:
+        _log.exception("fallo al iniciar pipeline %s", target)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

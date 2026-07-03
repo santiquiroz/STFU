@@ -8,6 +8,17 @@ _MIN_CONTEXT_MS = 120
 _MAX_CONTEXT_MS = 1000
 
 
+def _disable_df_git_introspection() -> None:
+    """init_df() ejecuta `git rev-parse` para loguear el commit; en el exe
+    empaquetado (sin consola) el subprocess revienta con WinError 50."""
+    import df.logger
+    import df.utils
+    df.utils.get_commit_hash = lambda: None
+    df.utils.get_branch_name = lambda: None
+    df.logger.get_commit_hash = lambda: None
+    df.logger.get_branch_name = lambda: None
+
+
 class DeepFilterNet3Plugin(AudioPlugin):
     """DFN3 con ventana deslizante de contexto.
 
@@ -35,6 +46,7 @@ class DeepFilterNet3Plugin(AudioPlugin):
 
     def setup(self, fmt: AudioFormat) -> AudioFormat:
         if self._model is None:
+            _disable_df_git_introspection()
             from df.enhance import init_df
             self._model, self._df_state, _ = init_df()
         self._reset_window()
