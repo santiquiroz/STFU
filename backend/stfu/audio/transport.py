@@ -71,6 +71,8 @@ class DriftServo:
         slew_ppm: float = 20.0,
         ema_alpha: float = 0.05,
     ) -> None:
+        if target_fill <= 0:
+            raise ValueError("target_fill debe ser > 0 (se usa como divisor del error)")
         self._target = float(target_fill)
         self._max_ppm = max_ppm
         self._gain_ppm = gain_ppm
