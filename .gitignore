@@ -54,3 +54,11 @@ driver/**/x64/
 apo/build/
 backend/dist/
 backend/build/
+
+# Driver build artifacts
+driver/**/x64/
+driver/**/Debug/
+driver/**/Release/
+driver/**/*.sys
+driver/**/*.cat
+driver/Package/
