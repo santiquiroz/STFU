@@ -28,12 +28,19 @@ def test_stats_initial_state():
     stats = _thread().stats
     assert stats == {
         "playback_active": False,
+        "worker_failed": False,
         "input_overflows": 0,
         "output_underflows": 0,
         "queue_drops": 0,
         "ring_fill": 0,
         "drift_ppm": 0.0,
     }
+
+
+def test_adjust_channels_passthrough_when_equal():
+    audio = np.random.randn(960, 2).astype(np.float32)
+    out = _adjust_channels(audio, 2)
+    assert out is audio  # sin copia cuando los canales ya coinciden
 
 
 def test_adjust_channels_mono_to_stereo():
