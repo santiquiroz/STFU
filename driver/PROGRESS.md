@@ -119,9 +119,11 @@ Verificado contra el source actual (líneas exactas del blueprint OK):
 
 Compilar es posible; **instalar sigue bloqueado por la falta de elevación** (cert a LocalMachine + `pnputil /add-driver /install` exigen admin, UAC interactivo). El resultado será un `.sys`/`.inf` compilado y test-signado; el usuario ejecuta un `pnputil` elevado (un comando) para instalar y verificar los 2 endpoints.
 
-### deepfilternet (test restante) — diferido
+### deepfilternet (último test) — RESUELTO vía Python 3.11
 
-`deepfilterlib` no tiene wheel prebuilt (solo sdist Rust) → necesita compilarse con un linker C. El EWDK provee VS Build Tools; tras montarlo se puede instalar `rustup` (per-user) y compilar `deepfilternet` para cerrar el último test.
+`deepfilterlib` no publica wheel para cp312 (solo hasta cp311). Solución: instalar **Python 3.11.9 per-user** (sin admin) y reconstruir el venv en 3.11 → `deepfilternet` + `deepfilterlib` 0.5.6 instalan desde wheel prebuilt (cero Rust, cero linker). Pinneado `torch/torchaudio 2.1.x` en requirements.txt (DeepFilterNet 0.5.6 usa `torchaudio.backend.common`, removido en 2.2+).
+
+**Suite ahora: 141 passed, 3 skipped, 0 fallos.** El test `test_dfn3_setup_process_teardown` corre inferencia real de DFN3 (descarga el modelo de HuggingFace). Verde total.
 
 ### Nota de proceso (delegación)
 
