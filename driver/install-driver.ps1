@@ -17,22 +17,31 @@ function Test-Admin {
 }
 
 # --- 1. Auto-elevacion (UAC una vez) ---
+# El proceso elevado deriva la carpeta de su propio $PSScriptRoot (-File), asi
+# que no hace falta pasar -PackageDir (el array de -ArgumentList lo mangla en
+# PS 5.1). Se pasa como string unico con comillas para robustez.
 if (-not (Test-Admin)) {
     Write-Host "Solicitando permisos de administrador (UAC)..." -ForegroundColor Cyan
-    Start-Process powershell -Verb RunAs -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath,
-        "-PackageDir", $PackageDir, "-HardwareId", $HardwareId
-    )
+    $a = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -HardwareId `"$HardwareId`""
+    Start-Process powershell -Verb RunAs -ArgumentList $a
     return
 }
 
-$log = Join-Path $PackageDir "install-log.txt"
+# El CWD de un proceso elevado es System32; hay que anclar todo al dir del
+# script. $PSScriptRoot viene de -File y sobrevive la elevacion (a diferencia de
+# un parametro pasado por Start-Process, que puede llegar vacio en PS 5.1).
+$base = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($base)) { $base = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if ($PackageDir -and (Test-Path $PackageDir)) { $base = $PackageDir }
+
+$log = Join-Path $base "install-log.txt"
 Start-Transcript -Path $log -Force | Out-Null
+$transcribing = $true
 
 function Finish([int]$code) {
     Write-Host ""
     Write-Host "Log guardado en: $log" -ForegroundColor DarkGray
-    Stop-Transcript | Out-Null
+    if ($script:transcribing) { try { Stop-Transcript | Out-Null } catch {} }
     Read-Host "Enter para salir"
     exit $code
 }
@@ -40,12 +49,13 @@ function Finish([int]$code) {
 $ErrorActionPreference = "Continue"
 Write-Host "=== Instalador STFU Microphone (test-signed) ===" -ForegroundColor Cyan
 Write-Host "Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  |  Equipo: $env:COMPUTERNAME"
+Write-Host "Carpeta del paquete: $base"
 
-# --- Localizar artefactos ---
-$inf = Get-ChildItem -Path $PackageDir -Recurse -Filter *.inf -ErrorAction SilentlyContinue | Select-Object -First 1
-if (-not $inf) { Write-Host "ERROR: no encontre el .inf en $PackageDir" -ForegroundColor Red; Finish 1 }
-$cer    = Get-ChildItem -Path $PackageDir -Recurse -Filter *.cer -ErrorAction SilentlyContinue | Select-Object -First 1
-$devcon = Get-ChildItem -Path $PackageDir -Recurse -Filter devcon.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+# --- Localizar artefactos (por nombre exacto, solo en el paquete) ---
+$inf = Get-ChildItem -Path $base -Filter "VirtualAudioDriver.inf" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $inf) { Write-Host "ERROR: no encontre VirtualAudioDriver.inf en $base" -ForegroundColor Red; Finish 1 }
+$cer    = Get-ChildItem -Path $base -Filter "*.cer" -ErrorAction SilentlyContinue | Select-Object -First 1
+$devcon = Get-ChildItem -Path $base -Filter "devcon.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 Write-Host "INF   : $($inf.FullName)"
 Write-Host "CER   : $($cer.FullName)"
 Write-Host "devcon: $($devcon.FullName)"

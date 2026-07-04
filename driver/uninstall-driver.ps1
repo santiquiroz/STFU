@@ -10,9 +10,8 @@ function Test-Admin {
 }
 
 if (-not (Test-Admin)) {
-    Start-Process powershell -Verb RunAs -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $PSCommandPath, "-HardwareId", $HardwareId
-    )
+    $a = "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -HardwareId `"$HardwareId`""
+    Start-Process powershell -Verb RunAs -ArgumentList $a
     return
 }
 
