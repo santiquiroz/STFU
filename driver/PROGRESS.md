@@ -117,7 +117,44 @@ Verificado contra el source actual (líneas exactas del blueprint OK):
 
 ### Límite persistente: INSTALACIÓN del driver
 
-Compilar es posible; **instalar sigue bloqueado por la falta de elevación** (cert a LocalMachine + `pnputil /add-driver /install` exigen admin, UAC interactivo). El resultado será un `.sys`/`.inf` compilado y test-signado; el usuario ejecuta un `pnputil` elevado (un comando) para instalar y verificar los 2 endpoints.
+Compilar es posible; **instalar sigue bloqueado por la falta de elevación** (cert a LocalMachine + `pnputil`/`devcon` exigen admin, UAC interactivo). Solución entregada: el instalador auto-elevado (`Instalar STFU.cmd`) que el usuario corre y aprueba UAC una vez.
+
+---
+
+## Driver COMPILADO — Fases 1-3 completas ✅
+
+Con el EWDK montado (drive F:, build 26100.6584), toolchain OK (msbuild VS BuildTools 2022, signtool, inf2cat, devcon).
+
+| Fase | Estado | Detalle |
+|---|---|---|
+| **1 — compilar as-is** | ✅ build exit 0 | Quitado `Package\package.VcxProj` ausente de la `.sln`; los 4 proyectos reales compilan → `VirtualAudioDriver.sys` + `.inf`. |
+| **2 — rename endpoints** | ✅ build exit 0 | `.inf` construido stampa "STFU Microphone" (captura) y "STFU Audio Bridge" (render). |
+| **3 — loopback kernel** | ✅ build exit 0, firmado | RingBuffer portado + ring compartido + mic `Take` + speaker `Put` + formato acordado. |
+
+### Fase 3 — detalles técnicos y correcciones
+
+- **RingBuffer** (`Utilities/RingBuffer.{h,cpp}`): `#include "definitions.h"`, `ExAllocatePoolWithTag`→`ExAllocatePool2`, quitados los `DPF` (disparaban C4127 + `%u` sobre ULONGLONG), ctor `noexcept`. **Bug de concurrencia corregido:** `Put()` no tomaba el spinlock (solo `Take()`); en el loopback render y capture son DPCs concurrentes → `Put()` ahora lockea.
+- **Ring compartido** (`minwavertstream.cpp`): puntero a nivel de archivo (un objeto `static` generaba un inicializador dinámico con `atexit`, inexistente en kernel → LNK2019). Alocado con placement-new de 3 args `new(POOL_FLAG_NON_PAGED, tag)` en el primer stream (el de 2 args disparaba C2956 por falta de placement-delete matcheado).
+- **mic `Take`** (WriteBytes) reemplaza el silencio; **speaker `Put`** (ReadBytes) reemplaza el volcado a archivo.
+- **Formato** (`micarraywavtable.h`): default del mic → 48k/16/estéreo, igual al del speaker (mix format compartido de WASAPI coincide).
+
+### Paquete del instalador — LISTO ✅
+
+`driver/package.ps1` (dev, sin admin) produce `driver/package_out/`:
+- `VirtualAudioDriver.sys` — firmado (CN=STFU Test Cert, cert propio en CurrentUser\My).
+- `virtualaudiodriver.cat` — generado con Inf2Cat, firmado.
+- `VirtualAudioDriver.inf` — nombres STFU, `ROOT\VirtualAudioDriver`.
+- `STFU-TestCert.cer` — cert público que el instalador confía.
+- `devcon.exe` — crea el devnode root-enumerated.
+- `Instalar STFU.cmd` / `install-driver.ps1` / `uninstall-driver.ps1`.
+
+**Para el usuario:** correr `driver\package_out\Instalar STFU.cmd`, aprobar UAC (y reiniciar una vez si test-signing está OFF). Luego verificar el cable con `backend/.venv/Scripts/python.exe driver/verify_cable.py` (seno 1kHz → FFT).
+
+### Pendiente (requiere elevación del usuario / runtime)
+
+- **Instalar** el paquete (1 doble-click + UAC) y confirmar que aparecen los 2 endpoints.
+- **Verificación del cable en runtime** (`verify_cable.py`): no ejecutable sin el driver instalado. El código kernel del loopback compila y está revisado, pero su correctitud byte-a-byte solo se confirma corriendo el test tras instalar.
+- **Cambio 5 completo** (reducir el mic a UN solo formato en vez de solo el default) — hecho el default-match de bajo riesgo; el recorte total conviene hacerlo con testing runtime disponible.
 
 ### deepfilternet (último test) — RESUELTO vía Python 3.11
 
