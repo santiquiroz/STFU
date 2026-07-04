@@ -4,9 +4,22 @@
 #include "endpoints.h"
 #include "minwavert.h"
 #include "minwavertstream.h"
+#include "RingBuffer.h"
 #define MINWAVERTSTREAM_POOLTAG 'SRWM'
 
 #pragma warning (disable : 4127)
+
+// Loopback (Modelo A): UN ring compartido a nivel de archivo entre el stream de
+// render ("STFU Audio Bridge", productor via Put) y el de captura
+// ("STFU Microphone", consumidor via Take). Ambos endpoints anuncian el mismo
+// formato (ver speakerwavtable.h / micarraywavtable.h), asi que los bytes del
+// ring son directamente compatibles. Se inicializa en el primer stream que
+// aloca su DMA buffer y persiste durante la vida del driver.
+// Puntero (no objeto a nivel de archivo): un RingBuffer estatico generaria un
+// inicializador dinamico con atexit para el destructor, inexistente en kernel.
+// Se aloca explicitamente en el primer stream y vive hasta el unload del driver.
+static RingBuffer* g_pLoopbackRing = NULL;
+static BOOL        g_RingReady = FALSE;
 
 //=============================================================================
 // CMiniportWaveRTStream
@@ -525,6 +538,19 @@ NTSTATUS CMiniportWaveRTStream::AllocateBufferWithNotification
     m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);
     m_ulNotificationsPerBuffer = NotificationCount_;
     m_ulDmaBufferSize = RequestedSize_;
+    // Loopback: inicializa el ring compartido en el primer stream que llega.
+    if (!g_RingReady)
+    {
+        if (g_pLoopbackRing == NULL)
+        {
+            g_pLoopbackRing = new (POOL_FLAG_NON_PAGED, MINWAVERTSTREAM_POOLTAG) RingBuffer();
+        }
+        if (g_pLoopbackRing != NULL &&
+            NT_SUCCESS(g_pLoopbackRing->Init(RequestedSize_ * 4, m_pWfExt->Format.nBlockAlign)))
+        {
+            g_RingReady = TRUE;
+        }
+    }
     ulBufferDurationMs = (RequestedSize_ * 1000) / m_ulDmaMovementRate;
     m_ulNotificationIntervalMs = ulBufferDurationMs / NotificationCount_;
 
@@ -761,6 +787,19 @@ _Out_   MEMORY_CACHING_TYPE    *CacheType_
     m_pDmaBuffer = (BYTE*)m_pPortStream->MapAllocatedPages(pBufferMdl, MmCached);
 
     m_ulDmaBufferSize = RequestedSize_;
+    // Loopback: inicializa el ring compartido en el primer stream que llega.
+    if (!g_RingReady)
+    {
+        if (g_pLoopbackRing == NULL)
+        {
+            g_pLoopbackRing = new (POOL_FLAG_NON_PAGED, MINWAVERTSTREAM_POOLTAG) RingBuffer();
+        }
+        if (g_pLoopbackRing != NULL &&
+            NT_SUCCESS(g_pLoopbackRing->Init(RequestedSize_ * 4, m_pWfExt->Format.nBlockAlign)))
+        {
+            g_RingReady = TRUE;
+        }
+    }
     m_ulNotificationsPerBuffer = 0;
 
     *AudioBufferMdl_ = pBufferMdl;
@@ -1412,10 +1451,19 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-        
-        // Instead of generating a tone, just output silence
-        RtlZeroMemory(m_pDmaBuffer + bufferOffset, runWrite);
-           	
+
+        // Loopback: llena la captura desde el ring (audio limpio escrito al
+        // Bridge). Si el ring esta vacio (underrun) se completa con silencio.
+        SIZE_T read = 0;
+        if (g_RingReady)
+        {
+            g_pLoopbackRing->Take(m_pDmaBuffer + bufferOffset, runWrite, &read);
+        }
+        if (read < runWrite)
+        {
+            RtlZeroMemory(m_pDmaBuffer + bufferOffset + read, runWrite - read);
+        }
+
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
     }
@@ -1446,7 +1494,12 @@ ByteDisplacement - # of bytes to process.
     while (ByteDisplacement > 0)
     {
         ULONG runWrite = min(ByteDisplacement, m_ulDmaBufferSize - bufferOffset);
-        m_SaveData.WriteData(m_pDmaBuffer + bufferOffset, runWrite);
+        // Loopback: empuja el audio del render (Bridge) al ring compartido para
+        // que el stream de captura (STFU Microphone) lo entregue a las apps.
+        if (g_RingReady)
+        {
+            g_pLoopbackRing->Put(m_pDmaBuffer + bufferOffset, runWrite);
+        }
         bufferOffset = (bufferOffset + runWrite) % m_ulDmaBufferSize;
         ByteDisplacement -= runWrite;
     }

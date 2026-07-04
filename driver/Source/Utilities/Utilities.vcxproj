@@ -183,6 +183,7 @@
   <ItemGroup>
     <ClCompile Include="hw.cpp" />
     <ClCompile Include="kshelper.cpp" />
+    <ClCompile Include="RingBuffer.cpp" />
     <ClCompile Include="savedata.cpp" />
     <ClCompile Include="tonegenerator.cpp" />
   </ItemGroup>
