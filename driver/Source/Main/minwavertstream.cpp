@@ -1403,11 +1403,11 @@ VOID CMiniportWaveRTStream::UpdatePosition
             m_bLastBufferRendered = TRUE;
         }
 
-        if (!g_DoNotCreateDataFiles)
-        {
-            // Read from buffer and write to a file.
-            ReadBytes(ByteDisplacement);
-        }
+        // Loopback: SIEMPRE empuja el audio del render al ring (ReadBytes->Put).
+        // El original lo gateaba con !g_DoNotCreateDataFiles (que por defecto es
+        // 1), pero Put no crea archivos: alimenta el cable. Sin esto el ring
+        // queda vacio y la captura entrega silencio.
+        ReadBytes(ByteDisplacement);
     }
     
     // Increment the DMA position by the number of bytes displaced since the last

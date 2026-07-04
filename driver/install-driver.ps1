@@ -79,14 +79,20 @@ if ($cer) {
     Import-Certificate -FilePath $cer.FullName -CertStoreLocation Cert:\LocalMachine\TrustedPublisher -ErrorAction SilentlyContinue | Out-Null
 }
 
-# --- 4. Instalar el paquete + crear el dispositivo root ---
-Write-Host "Registrando el paquete del driver (pnputil)..." -ForegroundColor Cyan
+# --- 4. Instalar / actualizar el paquete + dispositivo root ---
+$existing = @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -match "VirtualAudioDriver" })
+Write-Host "Registrando/actualizando el paquete del driver (pnputil)..." -ForegroundColor Cyan
 pnputil /add-driver $inf.FullName /install
 Write-Host "pnputil exit code: $LASTEXITCODE"
 
 if ($devcon) {
-    Write-Host "Creando el dispositivo virtual (devcon install $HardwareId)..." -ForegroundColor Cyan
-    & $devcon.FullName install $inf.FullName $HardwareId
+    if ($existing.Count -gt 0) {
+        Write-Host "El dispositivo ya existe; reiniciandolo para cargar el driver nuevo..." -ForegroundColor Cyan
+        & $devcon.FullName restart $HardwareId
+    } else {
+        Write-Host "Creando el dispositivo virtual (devcon install $HardwareId)..." -ForegroundColor Cyan
+        & $devcon.FullName install $inf.FullName $HardwareId
+    }
     Write-Host "devcon exit code: $LASTEXITCODE"
 }
 
