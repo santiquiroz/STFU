@@ -44,7 +44,7 @@ class ApoEngine:
 
     def status(self) -> dict[str, bool]:
         with self._lock:
-            return {flow: True for flow in self._servers}
+            return {flow: s.is_alive for flow, s in self._servers.items()}
 
     def set_parameter(self, flow: str, plugin_index: int, param_id: str, value) -> bool:
         with self._lock:
