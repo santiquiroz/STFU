@@ -123,6 +123,7 @@ class CaptureThread:
         if self._worker:
             self._worker.join(timeout=2.0)
             self._worker = None
+        self._pipeline.clear()
 
     def _worker_loop(self) -> None:
         chunks_since_update = 0

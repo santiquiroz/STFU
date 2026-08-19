@@ -32,6 +32,7 @@ class ApoEngine:
             server = self._servers.pop(flow, None)
         if server:
             server.stop()
+            server.pipeline.clear()
 
     def stop_all(self) -> None:
         with self._lock:
@@ -39,6 +40,7 @@ class ApoEngine:
             self._servers.clear()
         for s in servers:
             s.stop()
+            s.pipeline.clear()
 
     def status(self) -> dict[str, bool]:
         with self._lock:
