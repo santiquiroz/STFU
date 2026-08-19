@@ -72,6 +72,17 @@ class AudioEngine:
         with self._lock:
             return list(self._threads.keys())
 
+    def active_model_ids(self, target: str) -> set[str]:
+        from stfu.plugins.onnx_streaming import OnnxStreamingPlugin
+        with self._lock:
+            thread = self._threads.get(target)
+        if thread is None:
+            return set()
+        return {
+            p._manifest.id for p in thread.pipeline._plugins
+            if isinstance(p, OnnxStreamingPlugin)
+        }
+
     def get_stats(self) -> dict[str, dict]:
         with self._lock:
             threads = dict(self._threads)
