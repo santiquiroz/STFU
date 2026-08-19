@@ -199,6 +199,39 @@ def enable_unsigned_apos() -> None:
     _log.warning("DisableProtectedAudioDG=1 — APOs sin firma habilitados")
 
 
+def check_registrations() -> list[dict]:
+    """Delega en health.check_registrations con import diferido: health.py
+    importa de este módulo a nivel de módulo, así que el import inverso debe
+    ocurrir recién en tiempo de llamada para no ciclar."""
+    from stfu.apo.health import check_registrations as _check_registrations
+    return _check_registrations()
+
+
+def repair_registrations() -> list[dict]:
+    """Re-registra los endpoints cuyo APO fue desactivado por un update.
+    Preserva los efectos del fabricante vía el backup existente. Requiere admin."""
+    from stfu.apo.constants import CLSID_BY_FLOW
+    report = []
+    for check in check_registrations():
+        guid, flow, state = check["endpoint_guid"], check["flow"], check["state"]
+        if state == "ok":
+            report.append({**check, "result": "ok"})
+            continue
+        if state == "endpoint-missing":
+            report.append({**check, "result": "endpoint-missing"})
+            continue
+        if state != "deactivated":
+            report.append({**check, "result": state})
+            continue
+        try:
+            register_apo(guid, flow, CLSID_BY_FLOW[flow])
+            report.append({**check, "result": "repaired"})
+        except Exception as e:
+            _log.exception("repair de %s/%s falló", guid, flow)
+            report.append({**check, "result": "error", "detail": str(e)})
+    return report
+
+
 def _restart_audio_service() -> None:
     """Reinicia audiosrv para que audiodg recargue el APO.
 

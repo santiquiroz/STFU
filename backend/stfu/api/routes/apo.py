@@ -51,6 +51,17 @@ def apo_health():
     return {"needs_repair": health_needs_repair(), "endpoints": check_registrations()}
 
 
+@router.post("/repair")
+def apo_repair():
+    try:
+        from stfu.apo.elevate import run_elevated
+        run_elevated(["repair"])
+    except Exception as e:
+        _log.exception("fallo en repair APO elevado")
+        raise HTTPException(500, str(e))
+    return {"ok": True}
+
+
 @router.post("/register")
 def apo_register(req: ApoRegisterRequest):
     guid = _resolve_guid(req.device_name, req.flow)
