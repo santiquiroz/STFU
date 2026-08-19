@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
 import { api } from "../services/api";
+import { Spinner, extractError } from "../components/ui";
 
 function Toggle({
   on,
@@ -31,7 +32,7 @@ function Toggle({
       }`}
     >
       {loading ? (
-        <div className="w-5 h-5 mx-auto rounded-full border-2 border-white/40 border-t-white animate-spin" />
+        <Spinner />
       ) : (
         <div
           className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${
@@ -73,14 +74,6 @@ export function Simple() {
   const effectiveInput = selectedInput ?? inputs[0]?.id;
   const effectiveTestOut = selectedTestOut ?? outputs[0]?.id;
   const bridgePresent = feeder?.bridge_present ?? false;
-
-  function extractError(e: unknown): string {
-    if (e && typeof e === "object" && "response" in e) {
-      const resp = (e as { response?: { data?: { detail?: string } } }).response;
-      if (resp?.data?.detail) return resp.data.detail;
-    }
-    return e instanceof Error ? e.message : String(e);
-  }
 
   async function handleMicToggle(next: boolean) {
     setMicError(null);
