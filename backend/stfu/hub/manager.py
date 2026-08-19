@@ -79,6 +79,4 @@ class HubManager:
     def delete(self, model_id: str, active_ids: set[str]) -> None:
         if model_id in active_ids:
             raise ValueError(f"modelo {model_id!r} está activo — desactivar antes de borrar")
-        model_dir = self._registry.base_dir / model_id
-        if model_dir.exists():
-            shutil.rmtree(model_dir)
+        self._registry.delete(model_id)

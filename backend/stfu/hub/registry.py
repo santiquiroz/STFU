@@ -120,3 +120,9 @@ class ModelRegistry:
         _assert_contained(self.base_dir, id)
         m = self.get(id)
         return self.base_dir / id / m.file if m else None
+
+    def delete(self, id: str) -> None:
+        _assert_contained(self.base_dir, id)
+        model_dir = self.base_dir / id
+        if model_dir.exists():
+            shutil.rmtree(model_dir)

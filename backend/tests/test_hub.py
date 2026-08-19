@@ -48,3 +48,20 @@ def test_persists_across_instances(registry, tmp_path):
     registry.register(_manifest(), f)
     registry2 = ModelRegistry(registry.base_dir)
     assert len(registry2.list()) == 1
+
+
+def test_delete_removes_installed(registry, tmp_path):
+    f = tmp_path / "model.onnx"
+    f.write_bytes(b"fake")
+    registry.register(_manifest(), f)
+    registry.delete("test-model")
+    assert registry.list() == []
+
+
+def test_delete_missing_is_noop(registry):
+    registry.delete("nope")
+
+
+def test_delete_rejects_path_traversal(registry):
+    with pytest.raises(ValueError):
+        registry.delete("../escape")

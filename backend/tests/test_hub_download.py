@@ -66,3 +66,23 @@ def test_delete_removes_installed(hub):
     hub.download("fastenhancer-tiny")
     hub.delete("fastenhancer-tiny", active_ids=set())
     assert hub.catalog()[0]["installed"] is False
+
+
+def test_delete_rejects_dotdot_traversal(hub, tmp_path):
+    sentinel = tmp_path / "x"
+    sentinel.mkdir()
+    (sentinel / "canary.txt").write_text("intact")
+    with pytest.raises(ValueError):
+        hub.delete("../x", active_ids=set())
+    assert sentinel.exists()
+    assert (sentinel / "canary.txt").read_text() == "intact"
+
+
+def test_delete_rejects_backslash_traversal(hub, tmp_path):
+    sentinel = tmp_path / "y"
+    sentinel.mkdir()
+    (sentinel / "canary.txt").write_text("intact")
+    with pytest.raises(ValueError):
+        hub.delete("..\\..\\y", active_ids=set())
+    assert sentinel.exists()
+    assert (sentinel / "canary.txt").read_text() == "intact"
