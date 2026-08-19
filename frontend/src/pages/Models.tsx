@@ -6,6 +6,7 @@ import {
   useModels,
 } from "../hooks/useModels";
 import { usePipelineStatus } from "../hooks/usePipeline";
+import type { StreamStats } from "../services/api";
 import { extractError, Spinner } from "../components/ui";
 import { ModelCard } from "../components/ModelCard";
 
@@ -15,20 +16,35 @@ function deriveActiveTarget(streams: Record<string, unknown> | undefined): strin
   return Object.keys(streams ?? {})[0] ?? null;
 }
 
+// El backend es la fuente de verdad del modelo activo: expone model_id en
+// inference.runtime_status de cualquier stream corriendo, así que sobrevive a
+// remounts de pestaña y refleja swaps automáticos del degrade-monitor (F3).
+function deriveActiveModelId(streams: Record<string, StreamStats> | undefined): string | null {
+  for (const stream of Object.values(streams ?? {})) {
+    const modelId = stream.inference?.model_id;
+    if (modelId) return modelId;
+  }
+  return null;
+}
+
 export function Models() {
   const { data: models, isLoading, isError, error } = useModels();
   const { data: status } = usePipelineStatus();
   const downloadMutation = useDownloadModel();
   const activateMutation = useActivateModel();
   const deleteMutation = useDeleteModel();
-  const [activeModelId, setActiveModelId] = useState<string | null>(null);
+  // Fallback optimista para la breve ventana entre activar y el próximo
+  // refetch de /status; el valor del backend, cuando existe, siempre gana.
+  const [optimisticActiveModelId, setOptimisticActiveModelId] = useState<string | null>(null);
 
   const activeTarget = deriveActiveTarget(status?.streams);
+  const backendActiveModelId = deriveActiveModelId(status?.streams);
+  const activeModelId = backendActiveModelId ?? optimisticActiveModelId;
 
   function handleActivate(id: string, target: string, device: string) {
     activateMutation.mutate(
       { id, target, device },
-      { onSuccess: () => setActiveModelId(id) },
+      { onSuccess: () => setOptimisticActiveModelId(id) },
     );
   }
 

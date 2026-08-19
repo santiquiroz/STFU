@@ -27,6 +27,7 @@ export interface ModelInfo {
 export interface InferenceStatus {
   device: string | null;
   degraded: boolean;
+  model_id?: string | null;
 }
 
 export interface StreamStats {
