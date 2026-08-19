@@ -1,0 +1,8 @@
+{
+  "name": "Reunión",
+  "plugins": [
+    {"plugin_id": "model:fastenhancer-tiny", "parameters": {"strength": 1.0}},
+    {"plugin_id": "compressor", "parameters": {"agc": true, "agc_target_db": -18.0}},
+    {"plugin_id": "limiter", "parameters": {"ceiling_db": -1.0}}
+  ]
+}

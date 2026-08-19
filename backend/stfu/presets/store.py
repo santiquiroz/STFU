@@ -4,7 +4,9 @@ from pydantic import BaseModel, field_validator
 
 from stfu.hub.registry import _assert_contained
 
-_NAME_PATTERN = re.compile(r'^[A-Za-z0-9 _.\-]{1,64}$')
+# \w es Unicode-aware: los presets curados usan nombres en español con tildes
+# (p.ej. "Reunión", "Música"); '/' y '\' ya se rechazan aparte en validate_name.
+_NAME_PATTERN = re.compile(r'^[\w .\-]{1,64}$', re.UNICODE)
 _DOT_ONLY_NAMES = frozenset({'.', '..'})
 
 
@@ -21,7 +23,7 @@ class PresetSpec(BaseModel):
             raise ValueError(f"Preset name {v!r} must not contain path separators.")
         if not _NAME_PATTERN.match(v):
             raise ValueError(
-                f"Preset name {v!r} is invalid: must match [A-Za-z0-9 _.-]{{1,64}}."
+                f"Preset name {v!r} is invalid: must be 1-64 word characters, spaces, dots or hyphens."
             )
         return v
 
@@ -32,20 +34,23 @@ class PresetStore:
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def list(self) -> list[PresetSpec]:
+        # read_bytes (no read_text): JSON es UTF-8 por spec, pero read_text
+        # usa la codificación default de la plataforma, que en Windows no
+        # siempre es UTF-8 y corrompe nombres con tildes (p.ej. "Reunión").
         return [
-            PresetSpec.model_validate_json(p.read_text())
+            PresetSpec.model_validate_json(p.read_bytes())
             for p in self.base_dir.glob("*.json")
         ]
 
     def get(self, name: str) -> PresetSpec | None:
         _assert_contained(self.base_dir, name)
         p = self.base_dir / f"{name}.json"
-        return PresetSpec.model_validate_json(p.read_text()) if p.exists() else None
+        return PresetSpec.model_validate_json(p.read_bytes()) if p.exists() else None
 
     def save(self, preset: PresetSpec) -> None:
         _assert_contained(self.base_dir, preset.name)
         p = self.base_dir / f"{preset.name}.json"
-        p.write_text(preset.model_dump_json(indent=2))
+        p.write_text(preset.model_dump_json(indent=2), encoding="utf-8")
 
     def delete(self, name: str) -> None:
         _assert_contained(self.base_dir, name)
