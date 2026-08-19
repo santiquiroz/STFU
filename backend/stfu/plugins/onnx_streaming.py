@@ -47,7 +47,11 @@ class OnnxStreamingPlugin(AudioPlugin):
 
     @property
     def runtime_status(self) -> dict:
-        return {"device": self._active_device, "degraded": self._degraded}
+        return {
+            "device": self._active_device,
+            "degraded": self._degraded,
+            "model_id": self._manifest.id,
+        }
 
     def setup(self, fmt: AudioFormat) -> AudioFormat:
         if self._session is None:

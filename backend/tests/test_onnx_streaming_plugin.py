@@ -80,6 +80,12 @@ def test_active_device_reported(manifest):
     assert plugin.active_device == "cpu"
 
 
+def test_runtime_status_reports_manifest_model_id(manifest):
+    m, _ = manifest
+    plugin = _plugin(manifest, device="cpu")
+    assert plugin.runtime_status["model_id"] == m.id
+
+
 def test_probe_nan_rejection(manifest, monkeypatch):
     """Probe rejects NaN output; session cleanup and DeviceUnavailable raised."""
     from stfu.plugins.onnx_streaming import OnnxStreamingPlugin

@@ -59,8 +59,8 @@ def test_runtime_status_degraded_after_terminal_ep_failure(plugin, monkeypatch):
     monkeypatch.setattr(plugin._session, "run", boom)
     plugin.process(chunk)
 
-    assert plugin.runtime_status == {"device": "cpu", "degraded": True}
+    assert plugin.runtime_status == {"device": "cpu", "degraded": True, "model_id": "t"}
 
 
 def test_runtime_status_not_degraded_after_fresh_setup(plugin):
-    assert plugin.runtime_status == {"device": "cpu", "degraded": False}
+    assert plugin.runtime_status == {"device": "cpu", "degraded": False, "model_id": "t"}
