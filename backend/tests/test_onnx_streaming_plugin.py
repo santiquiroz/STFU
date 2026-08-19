@@ -78,3 +78,58 @@ def test_preferred_format_from_manifest(manifest):
 def test_active_device_reported(manifest):
     plugin = _plugin(manifest, device="cpu")
     assert plugin.active_device == "cpu"
+
+
+def test_probe_nan_rejection(manifest, monkeypatch):
+    """Probe rejects NaN output; session cleanup and DeviceUnavailable raised."""
+    from stfu.plugins.onnx_streaming import OnnxStreamingPlugin
+    from stfu.inference import ep_router
+
+    m, p = manifest
+    plugin = OnnxStreamingPlugin(m, p, device="cpu")
+
+    # Monkeypatch session.run to return NaN arrays
+    import onnxruntime as ort
+    original_init = ort.InferenceSession.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        original_run = self.run
+
+        def patched_run(output_names, input_feed):
+            # Return NaN-filled arrays for all outputs
+            return [np.full((_CHUNK, 1), np.nan, dtype=np.float32) for _ in output_names]
+
+        self.run = patched_run
+
+    monkeypatch.setattr(ort.InferenceSession, "__init__", patched_init)
+
+    # Setup with cpu (only device in ladder) should raise DeviceUnavailable
+    with pytest.raises(ep_router.DeviceUnavailable):
+        plugin.setup(plugin.preferred_format)
+
+    # Session should be None after failed probe
+    assert plugin._session is None
+
+
+def test_probe_exception_raises_device_unavailable(manifest, monkeypatch):
+    """Probe exception on InferenceSession creation raises DeviceUnavailable."""
+    from stfu.plugins.onnx_streaming import OnnxStreamingPlugin
+    from stfu.inference import ep_router
+    import onnxruntime as ort
+
+    m, p = manifest
+    plugin = OnnxStreamingPlugin(m, p, device="cpu")
+
+    # Monkeypatch InferenceSession.__init__ to raise RuntimeError
+    def patched_init(self, *args, **kwargs):
+        raise RuntimeError("Session initialization failed")
+
+    monkeypatch.setattr(ort.InferenceSession, "__init__", patched_init)
+
+    # Setup should raise DeviceUnavailable (cpu is only device in ladder)
+    with pytest.raises(ep_router.DeviceUnavailable):
+        plugin.setup(plugin.preferred_format)
+
+    # Session should remain None after exception
+    assert plugin._session is None

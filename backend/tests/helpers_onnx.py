@@ -1,6 +1,5 @@
 """Genera un modelo ONNX streaming mínimo para tests (audio + estado)."""
 from pathlib import Path
-import numpy as np
 from onnx import TensorProto, helper
 
 
