@@ -34,6 +34,9 @@ def test_stats_initial_state():
         "queue_drops": 0,
         "ring_fill": 0,
         "drift_ppm": 0.0,
+        "pipeline_failed": False,
+        "stages": [],
+        "total_latency_ms": 0.0,
     }
 
 

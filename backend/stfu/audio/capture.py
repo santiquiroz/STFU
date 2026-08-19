@@ -53,12 +53,17 @@ class CaptureThread:
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
         self._in_queue: queue.Queue = queue.Queue(maxsize=_INPUT_QUEUE_CHUNKS)
+        self._swap_queue: queue.Queue = queue.Queue()
         self._ring: RingBuffer | None = None
         self._servo: DriftServo | None = None
         self._resampler: samplerate.Resampler | None = None
         self._worker: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._latency_ms: float = 0.0
+        self._pipeline_failed = False
+        # Invariante: cada contador tiene UN solo hilo escritor (input CB o
+        # output CB); con el GIL los += no pierden updates. No agregar
+        # escritores sin repensar esto.
         self._input_overflows: int = 0
         self._output_underflows: int = 0
         self._queue_drops: int = 0
@@ -143,9 +148,26 @@ class CaptureThread:
         if self._worker:
             self._worker.join(timeout=2.0)
             self._worker = None
+        self._pipeline.clear()
+
+    def request_plugin_swap(self, index: int, plugin) -> None:
+        self._swap_queue.put((index, plugin))
+
+    def _drain_swaps(self) -> None:
+        while True:
+            try:
+                index, plugin = self._swap_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._pipeline.replace_plugin(index, plugin)
+                self._pipeline_failed = False  # un modelo nuevo resetea el estado failed
+            except Exception:
+                _log.exception("swap de plugin %d falló", index)
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
+            self._drain_swaps()
             try:
                 chunk = self._in_queue.get(timeout=0.1)
             except queue.Empty:
@@ -153,16 +175,15 @@ class CaptureThread:
             try:
                 self._process_and_output(chunk)
             except Exception:
-                # Una excepción del pipeline no debe matar el hilo en silencio:
-                # se marca el fallo (visible en stats) y se detiene el proceso.
+                # Un fallo de INFRAESTRUCTURA (resample/ring/servo) detiene el
+                # worker con flag visible. Un fallo de PLUGIN no llega acá:
+                # _process_or_passthrough lo degrada a passthrough sin cortar audio.
                 self._worker_failed = True
                 _log.exception("worker del pipeline falló; procesamiento detenido")
                 return
 
     def _process_and_output(self, chunk: np.ndarray) -> None:
-        t0 = time.perf_counter()
-        processed = self._pipeline.process(chunk)
-        self._latency_ms = (time.perf_counter() - t0) * 1000.0
+        processed = self._process_or_passthrough(chunk)
         if self._output_stream is None:
             return
         out = _adjust_channels(processed, self._out_channels)
@@ -173,6 +194,21 @@ class CaptureThread:
         if self._chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
             self._servo.update()
             self._chunks_since_update = 0
+
+    def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
+        """Una excepción de plugin no mata el worker: marca el estado y el
+        audio sigue fluyendo sin procesar hasta que el usuario reinicie."""
+        if self._pipeline_failed:
+            return chunk
+        t0 = time.perf_counter()
+        try:
+            processed = self._pipeline.process(chunk)
+        except Exception:
+            _log.exception("pipeline crashed; el target continúa en passthrough")
+            self._pipeline_failed = True
+            return chunk
+        self._latency_ms = (time.perf_counter() - t0) * 1000.0
+        return processed
 
     def _input_callback(
         self, indata: np.ndarray, frames: int, time_info, status
@@ -217,6 +253,9 @@ class CaptureThread:
             "queue_drops": self._queue_drops + (self._ring.overflows if self._ring else 0),
             "ring_fill": self._ring.fill if self._ring else 0,
             "drift_ppm": round(self._servo.ppm, 2) if self._servo else 0.0,
+            "pipeline_failed": self._pipeline_failed,
+            "stages": self._pipeline.stage_metrics(),
+            "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
         }
 
 

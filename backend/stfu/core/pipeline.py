@@ -1,7 +1,9 @@
 from typing import Optional
+from time import perf_counter
 import numpy as np
 from stfu.core.audio_format import AudioFormat
 from stfu.core.adapter import FormatAdapter
+from stfu.core.telemetry import StageMetrics
 from stfu.plugins.base import AudioPlugin
 
 
@@ -20,6 +22,7 @@ class Pipeline:
         self._output_adapter: Optional[FormatAdapter] = None
         self._input_format: Optional[AudioFormat] = None
         self._out_buffer = np.empty((0, 1), dtype=np.float32)
+        self._stage_metrics: list[StageMetrics] = []
 
     def add_plugin(self, plugin: AudioPlugin) -> None:
         self._plugins.append(plugin)
@@ -29,11 +32,23 @@ class Pipeline:
             raise IndexError(f"plugin_index {plugin_index} fuera de rango")
         self._plugins[plugin_index].set_parameter(param_id, value)
 
+    def replace_plugin(self, index: int, plugin: AudioPlugin) -> None:
+        """Swap en caliente: teardown del viejo, recompilación de stages.
+        Debe llamarse desde el hilo que ejecuta process() (el worker)."""
+        if not 0 <= index < len(self._plugins):
+            raise IndexError(f"plugin index {index} fuera de rango")
+        old = self._plugins[index]
+        self._plugins[index] = plugin
+        old.teardown()
+        if self._input_format is not None:
+            self.compile(self._input_format)
+
     def clear(self) -> None:
         for p in self._plugins:
             p.teardown()
         self._plugins.clear()
         self._stages.clear()
+        self._stage_metrics.clear()
         self._output_adapter = None
         self._input_format = None
 
@@ -41,6 +56,10 @@ class Pipeline:
         self._stages.clear()
         self._input_format = input_format
         self._out_buffer = np.empty((0, input_format.channels), dtype=np.float32)
+        budget_ms = input_format.chunk_samples / input_format.sample_rate * 1000.0
+        self._stage_metrics = [
+            StageMetrics(p.name, budget_ms=budget_ms) for p in self._plugins
+        ]
         current = input_format
         for plugin in self._plugins:
             pref = plugin.preferred_format
@@ -55,8 +74,10 @@ class Pipeline:
         if not self._plugins:
             return audio
         chunks: list[np.ndarray] = [audio]
-        for adapter, plugin in self._stages:
+        for (adapter, plugin), metrics in zip(self._stages, self._stage_metrics):
+            t0 = perf_counter()
             chunks = self._run_stage(adapter, plugin, chunks)
+            metrics.record((perf_counter() - t0) * 1000.0)
         self._push_output(chunks)
         return self._pop_output()
 
@@ -89,6 +110,9 @@ class Pipeline:
             self._out_buffer = self._out_buffer[n:]
             return out
         return np.zeros((n, fmt.channels), dtype=np.float32)
+
+    def stage_metrics(self) -> list[dict]:
+        return [m.snapshot() for m in self._stage_metrics]
 
     def total_latency_ms(self) -> float:
         plugin_lat = sum(p.algorithmic_latency_ms for p in self._plugins)

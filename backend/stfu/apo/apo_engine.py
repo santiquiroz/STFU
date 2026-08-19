@@ -3,6 +3,7 @@ import threading
 
 from stfu.apo.constants import PIPE_BY_FLOW
 from stfu.apo.pipe_server import ApoPipeServer
+from stfu.core.pipeline_factory import build_pipeline
 
 
 class ApoEngine:
@@ -11,10 +12,9 @@ class ApoEngine:
         self._lock = threading.Lock()
 
     def start(self, flow: str, plugin_configs: list[dict]) -> None:
-        from stfu.audio.engine import _build_pipeline
         from stfu.core.audio_format import AudioFormat
         pipe_name = PIPE_BY_FLOW[flow]
-        pipeline = _build_pipeline(plugin_configs)
+        pipeline = build_pipeline(plugin_configs)
         # warmup: carga modelos AQUÍ (segundos) y no en el primer frame del
         # APO; el server recompila si el formato real difiere (rápido, el
         # modelo ya está cacheado en el plugin)
@@ -32,6 +32,7 @@ class ApoEngine:
             server = self._servers.pop(flow, None)
         if server:
             server.stop()
+            server.pipeline.clear()
 
     def stop_all(self) -> None:
         with self._lock:
@@ -39,10 +40,11 @@ class ApoEngine:
             self._servers.clear()
         for s in servers:
             s.stop()
+            s.pipeline.clear()
 
     def status(self) -> dict[str, bool]:
         with self._lock:
-            return {flow: True for flow in self._servers}
+            return {flow: s.is_alive for flow, s in self._servers.items()}
 
     def set_parameter(self, flow: str, plugin_index: int, param_id: str, value) -> bool:
         with self._lock:

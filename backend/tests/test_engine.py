@@ -1,13 +1,12 @@
 """Tests de orquestación de AudioEngine con CaptureThread mockeado.
 
 Verifican el ciclo de vida (start/stop/stop_all), el ruteo de parámetros y
-_build_pipeline / _out_channels_for_device sin abrir dispositivos reales.
+_out_channels_for_device sin abrir dispositivos reales. La construcción del
+pipeline se movió a stfu.core.pipeline_factory (ver test_pipeline_factory.py).
 """
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from stfu.audio.engine import AudioEngine, _build_pipeline, _out_channels_for_device
+from stfu.audio.engine import AudioEngine, _out_channels_for_device
 
 
 def _mock_capture_thread():
@@ -23,16 +22,6 @@ def _mock_capture_thread():
         return m
 
     return MagicMock(side_effect=factory), created
-
-
-def test_build_pipeline_unknown_plugin_raises():
-    with pytest.raises(ValueError, match="Plugin desconocido"):
-        _build_pipeline([{"plugin_id": "noexiste"}])
-
-
-def test_build_pipeline_applies_parameters():
-    pipeline = _build_pipeline([{"plugin_id": "gain", "parameters": {"gain_db": 6.0}}])
-    assert len(pipeline._plugins) == 1
 
 
 def test_out_channels_caps_at_two():

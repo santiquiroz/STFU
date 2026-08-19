@@ -102,10 +102,16 @@ class ApoPipeServer:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._fmt_key: tuple[int, int, int] | None = None
+        self._client_threads: list[threading.Thread] = []
+        self._client_threads_lock = threading.Lock()
 
     @property
     def pipeline(self):
         return self._pipeline
+
+    @property
+    def is_alive(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
 
     def start(self) -> None:
         """Start the named pipe server."""
@@ -118,10 +124,51 @@ class ApoPipeServer:
     def stop(self) -> None:
         """Stop the named pipe server."""
         self._stop_event.set()
+        self._unblock_accept()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+        self._join_client_threads()
+        self._pipeline.clear()
+
+    def _unblock_accept(self) -> None:
+        """ConnectNamedPipe es bloqueante: una conexión dummy lo despierta
+        para que el accept loop vea el stop_event y salga."""
+        try:
+            handle = win32file.CreateFile(
+                self._pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0, None, win32file.OPEN_EXISTING, 0, None,
+            )
+            win32file.CloseHandle(handle)
+        except pywintypes.error:
+            pass  # nadie escuchando: el accept loop ya salió o nunca arrancó
+
+    def _join_client_threads(self) -> None:
+        """Joinea los handlers de clientes activos (bounded) para que el
+        caller de stop() no haga teardown del pipeline mientras alguno
+        sigue en medio de process()."""
+        with self._client_threads_lock:
+            threads = list(self._client_threads)
+        for t in threads:
+            t.join(timeout=2.0)
+
+    def _register_client_thread(self, thread: threading.Thread) -> None:
+        with self._client_threads_lock:
+            self._client_threads.append(thread)
+
+    def _discard_client_thread(self, thread: threading.Thread) -> None:
+        with self._client_threads_lock:
+            if thread in self._client_threads:
+                self._client_threads.remove(thread)
 
     def _accept_loop(self) -> None:
         """Accept incoming client connections."""
-        sa = _pipe_security_attributes()
+        try:
+            sa = _pipe_security_attributes()
+        except Exception:
+            _log.exception("no se pudo crear el security descriptor del pipe")
+            return
         while not self._stop_event.is_set():
             pipe = None
             try:
@@ -133,8 +180,15 @@ class ApoPipeServer:
                     _MAX_MESSAGE, _MAX_MESSAGE, 0, sa,
                 )
                 win32pipe.ConnectNamedPipe(pipe, None)
-                threading.Thread(target=self._handle_client, args=(pipe,), daemon=True).start()
-            except pywintypes.error:
+                if self._stop_event.is_set():
+                    win32file.CloseHandle(pipe)
+                    break
+                client_thread = threading.Thread(target=self._handle_client, args=(pipe,), daemon=True)
+                # start() antes de registrar: garantiza que el thread ya está
+                # "started" para join() si stop() corre justo después.
+                client_thread.start()
+                self._register_client_thread(client_thread)
+            except Exception:
                 _log.exception("pipe accept error")
                 if pipe is not None:
                     win32file.CloseHandle(pipe)
@@ -172,7 +226,8 @@ class ApoPipeServer:
                     processed = req["audio"]
                 response = build_response_frame(req["frame_id"], processed)
                 win32file.WriteFile(pipe, response)
-        except pywintypes.error:
-            pass
+        except pywintypes.error as e:
+            _log.debug("cliente APO desconectado: %s", e)
         finally:
             win32file.CloseHandle(pipe)
+            self._discard_client_thread(threading.current_thread())

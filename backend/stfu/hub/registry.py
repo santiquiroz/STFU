@@ -1,12 +1,35 @@
 import re
 import shutil
 from pathlib import Path
+from typing import Literal
 from pydantic import BaseModel, field_validator
 
 _ID_PATTERN = re.compile(r'^[A-Za-z0-9_.\-]{1,64}$')
 _DANGEROUS_TOKENS = frozenset({
     '__builtins__', 'builtins', 'os', 'subprocess', 'sys', 'importlib', 'eval', 'exec',
 })
+_DOT_ONLY_IDS = frozenset({'.', '..'})
+
+
+def _is_dot_only(value: str) -> bool:
+    return value in _DOT_ONLY_IDS
+
+
+class TensorSpec(BaseModel):
+    name: str
+    shape: list[int | str]
+
+
+class StateSpec(BaseModel):
+    input: str
+    output: str
+    shape: list[int]
+
+
+class IoSpec(BaseModel):
+    audio_input: TensorSpec
+    audio_output: str
+    states: list[StateSpec] = []
 
 
 class ModelManifest(BaseModel):
@@ -17,18 +40,25 @@ class ModelManifest(BaseModel):
     source: str
     file: str
     preferred_format: dict
-    supported_backends: list[str]
     size_mb: float
     algorithmic_latency_ms: float
     tags: list[str] = []
+    tier: Literal["floor", "default", "quality", "legacy"] = "default"
+    license: str = ""
+    hf_repo: str | None = None
+    url: str | None = None
+    sha256: str | None = None
+    supported_devices: list[str] = ["cpu", "gpu"]
+    io_spec: IoSpec | None = None
+    supported_backends: list[str] = []
 
     @field_validator('id')
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not _ID_PATTERN.match(v):
+        if not _ID_PATTERN.match(v) or _is_dot_only(v):
             raise ValueError(
                 f"Model id {v!r} is invalid: must match [A-Za-z0-9_.-]{{1,64}} "
-                "and must not contain path separators or '..'."
+                "and must not be '.', '..', or contain path separators."
             )
         return v
 
@@ -63,8 +93,11 @@ class ModelManifest(BaseModel):
 
 
 def _assert_contained(base_dir: Path, id: str) -> None:
+    resolved_base = base_dir.resolve()
     resolved = (base_dir / id).resolve()
-    if not resolved.is_relative_to(base_dir.resolve()):
+    escapes_base = not resolved.is_relative_to(resolved_base)
+    is_base_itself = resolved == resolved_base
+    if escapes_base or is_base_itself:
         raise ValueError(f"Model id {id!r} escapes base directory")
 
 
@@ -95,3 +128,9 @@ class ModelRegistry:
         _assert_contained(self.base_dir, id)
         m = self.get(id)
         return self.base_dir / id / m.file if m else None
+
+    def delete(self, id: str) -> None:
+        _assert_contained(self.base_dir, id)
+        model_dir = self.base_dir / id
+        if model_dir.exists():
+            shutil.rmtree(model_dir)

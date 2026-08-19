@@ -1,5 +1,8 @@
 from dataclasses import dataclass
+import logging
 import sounddevice as sd
+
+_log = logging.getLogger(__name__)
 
 # Nombre del endpoint render del driver virtual (v2) donde el feeder escribe el
 # audio limpio. El driver lo enruta a "STFU Microphone" que las apps eligen.
@@ -27,23 +30,31 @@ def _wasapi_index() -> int | None:
         return None
 
 
-def _wasapi_default_devices(wasapi_idx: int | None) -> tuple[int, int]:
-    """Índices GLOBALES del default de entrada/salida del propio host API WASAPI
-    (o -1 si no hay). Se resuelve por índice y no por `sd.default.device`, cuyos
-    nombres provienen del host API por defecto (MME) y llegan truncados a 31
-    chars: comparar por nombre nunca casaría con el nombre WASAPI completo."""
-    if wasapi_idx is None:
-        return -1, -1
+def _default_device_ids(wasapi_idx: int | None) -> tuple[int | None, int | None]:
+    """Índices globales del default input/output del host API WASAPI.
+
+    sd.default.device apunta al host API por defecto (MME en Windows, nombres
+    truncados a ~31 chars); el host API WASAPI publica sus propios defaults
+    con índice global — sin comparar strings."""
+    if wasapi_idx is not None:
+        try:
+            api = sd.query_hostapis(wasapi_idx)
+            din = api["default_input_device"]
+            dout = api["default_output_device"]
+            return (din if din >= 0 else None, dout if dout >= 0 else None)
+        except Exception:
+            _log.warning("query_hostapis(%s) falló", wasapi_idx, exc_info=True)
     try:
-        api = sd.query_hostapis(wasapi_idx)
-        return int(api["default_input_device"]), int(api["default_output_device"])
+        raw = sd.default.device
+        return int(raw[0]), int(raw[1])
     except Exception:
-        return -1, -1
+        _log.warning("sd.default.device no disponible", exc_info=True)
+        return None, None
 
 
 def list_devices() -> list[DeviceInfo]:
     wasapi_idx = _wasapi_index()
-    default_in, default_out = _wasapi_default_devices(wasapi_idx)
+    default_in, default_out = _default_device_ids(wasapi_idx)
     result = []
     for i, d in enumerate(sd.query_devices()):
         if wasapi_idx is not None and d["hostapi"] != wasapi_idx:

@@ -125,11 +125,35 @@ def test_output_non_portaudio_error_cleans_up_and_reraises():
         assert t._worker is None
 
 
-def test_worker_failure_sets_flag_and_exits():
+def test_plugin_crash_degrades_to_passthrough_keeps_worker_alive():
+    # Un fallo de PLUGIN no mata el worker: se degrada a passthrough (pipeline_failed)
+    # y el audio sigue fluyendo crudo hasta que el usuario reinicie.
     pipeline = MagicMock()
     pipeline.process.side_effect = RuntimeError("plugin exploto")
     p_out, p_in, p_conv = _patch_streams()
     with p_out, p_in, p_conv:
+        t = _thread(pipeline=pipeline)
+        try:
+            t.start()
+            t._in_queue.put(np.zeros((960, 2), dtype=np.float32))
+            deadline = time.time() + 3.0
+            while not t._pipeline_failed and time.time() < deadline:
+                time.sleep(0.02)
+            assert t._pipeline_failed is True
+            assert t.worker_failed is False
+            assert t._worker.is_alive()  # el worker NO muere ante un fallo de plugin
+        finally:
+            t.stop()
+
+
+def test_infra_failure_sets_worker_failed_and_exits():
+    # Un fallo de INFRAESTRUCTURA (post-plugin: adaptación/resample/ring) sí
+    # detiene el worker con flag visible — no hay passthrough posible ahí.
+    pipeline = MagicMock()
+    pipeline.process.return_value = np.zeros((960, 2), dtype=np.float32)
+    p_out, p_in, p_conv = _patch_streams()
+    with p_out, p_in, p_conv, \
+         patch("stfu.audio.capture._adjust_channels", side_effect=RuntimeError("infra boom")):
         t = _thread(pipeline=pipeline)
         try:
             t.start()

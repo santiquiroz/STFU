@@ -16,7 +16,12 @@ from stfu.audio.engine import engine
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from stfu.audio.degrade_monitor import DegradeMonitor
+    from stfu.api.routes.models import _hub
+    monitor = DegradeMonitor(engine, lambda: _hub().catalog())
+    monitor.start()
     yield
+    monitor.stop()
     engine.stop_all()
     from stfu.apo.apo_engine import apo_engine
     apo_engine.stop_all()
@@ -43,19 +48,22 @@ app.include_router(apo_router)
 app.include_router(feeder_router)
 
 
-@app.get("/status")
-def status():
+def _status_payload() -> dict:
+    from stfu.apo.apo_engine import apo_engine
     return {
         "status": "ok",
         "latency_ms": engine.get_latency_ms(),
         "active": engine.active_targets(),
         "streams": engine.get_stats(),
+        "apo": apo_engine.status(),
     }
+
+
+@app.get("/status")
+def status():
+    return _status_payload()
 
 
 @app.websocket("/ws/metering")
 async def ws_metering(websocket: WebSocket):
-    await metering_ws(websocket, lambda: {
-        "latency_ms": engine.get_latency_ms(),
-        "active": engine.active_targets(),
-    })
+    await metering_ws(websocket, _status_payload)
