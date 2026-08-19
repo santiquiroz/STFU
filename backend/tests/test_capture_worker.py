@@ -71,3 +71,26 @@ def test_healthy_pipeline_reports_stats_shape():
     assert s["pipeline_failed"] is False
     assert s["stages"] == []
     assert s["total_latency_ms"] == 0.0
+    assert s["inference"] is None
+
+
+class _InferencePlugin(_ExplodingPlugin):
+    """Duck-types runtime_status como el plugin ONNX NC (sin correr ONNX)."""
+
+    def __init__(self, degraded: bool) -> None:
+        self._degraded = degraded
+
+    def process(self, audio):
+        return audio
+
+    @property
+    def runtime_status(self) -> dict:
+        return {"device": "cpu", "degraded": self._degraded}
+
+
+def test_stats_surfaces_first_plugin_runtime_status():
+    pipeline = Pipeline()
+    pipeline.add_plugin(_InferencePlugin(degraded=True))
+    t = _thread_with(pipeline)
+
+    assert t.stats["inference"] == {"device": "cpu", "degraded": True}

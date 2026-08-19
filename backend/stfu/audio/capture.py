@@ -17,6 +17,16 @@ _TARGET_FILL_CHUNKS = 2
 _SERVO_UPDATE_EVERY_CHUNKS = 250  # ~5s con chunks de 20ms
 
 
+def _first_inference_status(plugins) -> dict | None:
+    """runtime_status del primer plugin de inferencia en el pipeline (duck
+    typing: solo el plugin ONNX NC lo expone hoy), o None si no hay ninguno."""
+    for plugin in plugins:
+        status = getattr(plugin, "runtime_status", None)
+        if status is not None:
+            return status
+    return None
+
+
 def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
     """AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM: Windows resamplea cualquier
     dispositivo al formato canónico del engine (requiere sounddevice >= 0.4.7)."""
@@ -256,6 +266,7 @@ class CaptureThread:
             "pipeline_failed": self._pipeline_failed,
             "stages": self._pipeline.stage_metrics(),
             "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
+            "inference": _first_inference_status(self._pipeline._plugins),
         }
 
 
