@@ -2,16 +2,7 @@ import threading
 import sounddevice as sd
 from stfu.audio.capture import CaptureThread
 from stfu.core.audio_format import AudioFormat
-from stfu.core.pipeline import Pipeline
-from stfu.plugins.builtin.deepfilternet3 import DeepFilterNet3Plugin
-from stfu.plugins.builtin.eq_parametric import EQParametricPlugin
-from stfu.plugins.builtin.gain import GainPlugin
-
-_PLUGIN_CLASSES = {
-    "deepfilternet3": DeepFilterNet3Plugin,
-    "eq_parametric": EQParametricPlugin,
-    "gain": GainPlugin,
-}
+from stfu.core.pipeline_factory import build_pipeline
 
 # Stereo capture: WASAPI shared mode rejects mono on most devices.
 # FormatAdapter handles stereo→mono conversion before plugins that need mono.
@@ -24,19 +15,6 @@ def _out_channels_for_device(device_id: int) -> int:
         return min(int(info["max_output_channels"]), 2)
     except Exception:
         return 2
-
-
-def _build_pipeline(plugin_configs: list[dict]) -> Pipeline:
-    pipeline = Pipeline()
-    for cfg in plugin_configs:
-        cls = _PLUGIN_CLASSES.get(cfg["plugin_id"])
-        if cls is None:
-            raise ValueError(f"Plugin desconocido: {cfg['plugin_id']}")
-        plugin = cls()
-        for k, v in cfg.get("parameters", {}).items():
-            plugin.set_parameter(k, v)
-        pipeline.add_plugin(plugin)
-    return pipeline
 
 
 class AudioEngine:
@@ -57,7 +35,7 @@ class AudioEngine:
             old = self._threads.pop(target, None)
             if old:
                 old.stop()
-            pipeline = _build_pipeline(plugin_configs)
+            pipeline = build_pipeline(plugin_configs)
             out_ch = _out_channels_for_device(output_device_id)
             thread = CaptureThread(
                 input_device_id=input_device_id,
