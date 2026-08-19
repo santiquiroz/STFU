@@ -61,3 +61,20 @@ def test_bypass_toggles_back():
     t.set_bypass(False)
     out = t._process_or_passthrough(np.ones((960, 2), dtype=np.float32))
     assert np.all(out == 0.0)
+
+
+def test_process_and_output_with_bypass_reports_zero_reduction():
+    """Ejercita el punto de entrada real del worker (_process_and_output, no
+    _process_or_passthrough/_record_audio_telemetry sueltos) con bypass ON.
+    El plugin _Zeroer borraría todo el audio si bypass no aplicara de
+    verdad — con bypass ON debe salir crudo, por lo que pre == post y la
+    telemetría debe reportar reduction_db == 0.0 exacto."""
+    t = _thread()
+    t.set_bypass(True)
+    chunk = 0.3 * np.ones((960, 2), dtype=np.float32)
+
+    t._process_and_output(chunk)
+
+    stats = t.stats
+    assert stats["bypass"] is True
+    assert stats["audio"]["reduction_db"] == 0.0
