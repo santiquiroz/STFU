@@ -71,13 +71,36 @@ class OnnxStreamingPlugin(AudioPlugin):
         if self._session is None:
             return audio
         dry = audio
-        wet = self._run(audio)
-        s = self._strength
-        out = (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
-        if not np.isfinite(out).all():
+        try:
+            wet = self._run(audio)
+        except Exception:
+            _log.exception("run de la sesión falló en device %s; intentando fallback", self._active_device)
+            if not self._fallback_to_next_device():
+                self._session = None
+                return dry
+            try:
+                wet = self._run(audio)
+            except Exception:
+                _log.exception("run falló también tras fallback; passthrough")
+                self._session = None
+                return dry
+        if not np.isfinite(wet).all():
             self._warn_nan_once()
             return dry
-        return out
+        s = self._strength
+        return (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
+
+    def _fallback_to_next_device(self) -> bool:
+        for candidate in ep_router.remaining_ladder(self._active_device or self._device):
+            try:
+                providers = ep_router.providers_for(candidate)
+            except ep_router.DeviceUnavailable:
+                continue
+            if self._probe(providers):
+                self._active_device = candidate
+                _log.warning("EP fallback: sesión recreada en device %s", candidate)
+                return True
+        return False
 
     def _warn_nan_once(self) -> None:
         if not self._nan_warned:
