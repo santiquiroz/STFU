@@ -87,7 +87,7 @@ def feeder_stop():
 def feeder_parameter(update: ParameterUpdate):
     try:
         ok = engine.set_parameter(_TARGET, update.plugin_index, update.parameter_id, update.value)
-    except IndexError as exc:
+    except (IndexError, ValueError, ZeroDivisionError, TypeError) as exc:
         raise HTTPException(400, str(exc))
     if not ok:
         raise HTTPException(404, "feeder no está activo")

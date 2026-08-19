@@ -106,6 +106,20 @@ def test_parameter_out_of_range_returns_400():
     assert r.status_code == 400
 
 
+def test_parameter_bad_value_returns_400_not_500():
+    with patch("stfu.api.routes.feeder.engine.set_parameter", side_effect=ValueError("valor no numérico")):
+        r = client.post("/feeder/parameter",
+                        json={"plugin_index": 0, "parameter_id": "strength", "value": 0.9})
+    assert r.status_code == 400
+
+
+def test_parameter_zero_division_returns_400_not_500():
+    with patch("stfu.api.routes.feeder.engine.set_parameter", side_effect=ZeroDivisionError("division por cero")):
+        r = client.post("/feeder/parameter",
+                        json={"plugin_index": 0, "parameter_id": "strength", "value": 0.9})
+    assert r.status_code == 400
+
+
 def test_start_engine_failure_returns_500_without_leaking_detail():
     bridge = _dev(9, "STFU Audio Bridge", 2)
     with patch("stfu.api.routes.feeder.find_bridge_output", return_value=bridge), \

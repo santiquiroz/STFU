@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 from stfu.main import app
 
@@ -64,4 +65,31 @@ def test_set_bypass_on_inactive_pipeline_returns_404():
 
 def test_set_bypass_invalid_target_returns_400():
     r = client.post("/pipeline/foo/bypass", json={"on": True})
+    assert r.status_code == 400
+
+
+def test_set_parameter_bad_value_returns_400_not_500():
+    with patch("stfu.api.routes.pipeline.engine.set_parameter", side_effect=ValueError("valor no numérico")):
+        r = client.post(
+            "/pipeline/mic/parameter",
+            json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
+        )
+    assert r.status_code == 400
+
+
+def test_set_parameter_zero_division_returns_400_not_500():
+    with patch("stfu.api.routes.pipeline.engine.set_parameter", side_effect=ZeroDivisionError("division por cero")):
+        r = client.post(
+            "/pipeline/mic/parameter",
+            json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
+        )
+    assert r.status_code == 400
+
+
+def test_set_parameter_type_error_returns_400_not_500():
+    with patch("stfu.api.routes.pipeline.engine.set_parameter", side_effect=TypeError("tipo invalido")):
+        r = client.post(
+            "/pipeline/mic/parameter",
+            json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
+        )
     assert r.status_code == 400

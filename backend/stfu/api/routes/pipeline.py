@@ -59,7 +59,7 @@ def set_parameter(target: str, update: ParameterUpdate):
         raise HTTPException(status_code=400, detail="target must be 'mic' or 'speaker'")
     try:
         ok = engine.set_parameter(target, update.plugin_index, update.parameter_id, update.value)
-    except IndexError as exc:
+    except (IndexError, ValueError, ZeroDivisionError, TypeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     if not ok:
         raise HTTPException(status_code=404, detail=f"pipeline '{target}' no está activo")
