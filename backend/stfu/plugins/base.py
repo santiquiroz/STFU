@@ -30,7 +30,18 @@ class AudioPlugin(ABC):
     def preferred_format(self) -> AudioFormat: ...
 
     @abstractmethod
-    def setup(self, fmt: AudioFormat) -> AudioFormat: ...
+    def setup(self, fmt: AudioFormat) -> AudioFormat:
+        """Prepara el plugin para recibir audio en `fmt` y devuelve el
+        formato que efectivamente produce en `process()`.
+
+        Invariante requerido por el swap quirúrgico de Pipeline
+        (`_swap_stage_in_place`): debe devolver `fmt` sin modificar. Un
+        plugin cuyo `setup()` transforme el formato (devuelva algo distinto
+        de `fmt`) es incompatible con ese camino — el adapter del stage
+        siguiente, reutilizado sin reconstruir, quedaría con el formato de
+        entrada equivocado. Un plugin así necesita recompilación completa,
+        no swap in-place."""
+        ...
 
     @abstractmethod
     def process(self, audio: np.ndarray) -> np.ndarray: ...
