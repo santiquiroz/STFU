@@ -1,0 +1,3 @@
+# Extra opcional: DeepFilterNet3 legacy (torch). El lineup ONNX no lo necesita.
+-r requirements.txt
+deepfilternet>=0.5.6

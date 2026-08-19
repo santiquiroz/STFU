@@ -1,3 +1,4 @@
+import importlib.util
 import numpy as np
 import pytest
 from typing import Any
@@ -70,6 +71,10 @@ def test_dfn3_preferred_format():
     assert p.preferred_format == AudioFormat(48000, 1, 960)
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("df") is None,
+    reason="extra torch opcional (requirements-torch.txt)",
+)
 def test_dfn3_setup_process_teardown():
     p = DeepFilterNet3Plugin()
     fmt = p.preferred_format

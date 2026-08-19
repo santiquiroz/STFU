@@ -3,7 +3,6 @@ numpy>=1.26.0,<2.0.0
 scipy>=1.13.0
 soxr>=0.5.0
 samplerate>=0.2.1
-deepfilternet>=0.5.6
 onnxruntime-directml>=1.20.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

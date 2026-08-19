@@ -2,7 +2,6 @@
 import os
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_dynamic_libs
-from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
@@ -14,10 +13,9 @@ hiddenimports = ['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.htt
 datas += collect_data_files('_sounddevice_data')
 binaries += collect_dynamic_libs('soxr')
 binaries += collect_dynamic_libs('samplerate')
-tmp_ret = collect_all('df')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('torchaudio')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+# Los manifests curados del hub deben viajar en el binario (lineup ONNX)
+datas += [("stfu/hub/curated", "stfu/hub/curated")]
+# DFN3 (torch/df) es extra opcional legacy — se excluye del instalador ONNX
 
 
 a = Analysis(
@@ -29,7 +27,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["torch", "torchaudio", "df", "deepfilternet"],
     noarchive=False,
     optimize=0,
 )
