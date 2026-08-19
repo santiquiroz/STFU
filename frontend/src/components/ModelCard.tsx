@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ModelInfo } from "../services/api";
 import { Badge, Card, Spinner, TierBadge } from "./ui";
 
@@ -20,7 +20,7 @@ const tierAccentClasses: Record<ModelInfo["tier"], string> = {
   floor: "border-l-blue-500",
   default: "border-l-green-500",
   quality: "border-l-amber-500",
-  legacy: "border-l-zinc-600",
+  legacy: "border-l-zinc-500",
 };
 
 const primaryButtonClasses =
@@ -140,6 +140,10 @@ export function ModelCard({
   onDelete,
 }: ModelCardProps) {
   const [panelOpen, setPanelOpen] = useState(false);
+
+  useEffect(() => {
+    if (active) setPanelOpen(false);
+  }, [active]);
 
   function handleConfirmActivate(device: string) {
     onActivate("mic", device);
