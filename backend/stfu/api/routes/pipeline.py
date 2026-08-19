@@ -69,3 +69,17 @@ def set_parameter(target: str, update: ParameterUpdate):
 @router.get("/pipeline/active")
 def active_pipelines():
     return {"active": engine.active_targets()}
+
+
+class BypassUpdate(BaseModel):
+    on: bool
+
+
+@router.post("/pipeline/{target}/bypass")
+def set_bypass(target: str, update: BypassUpdate):
+    if target not in ("mic", "speaker"):
+        raise HTTPException(status_code=400, detail="target must be 'mic' or 'speaker'")
+    ok = engine.set_bypass(target, update.on)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"pipeline '{target}' no está activo")
+    return {"ok": True, "target": target, "bypass": update.on}

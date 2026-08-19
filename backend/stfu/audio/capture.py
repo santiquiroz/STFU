@@ -104,6 +104,7 @@ class CaptureThread:
         self._stop_event = threading.Event()
         self._latency_ms: float = 0.0
         self._pipeline_failed = False
+        self._bypass = False
         # Invariante: cada contador tiene UN solo hilo escritor (input CB o
         # output CB); con el GIL los += no pierden updates. No agregar
         # escritores sin repensar esto.
@@ -201,6 +202,11 @@ class CaptureThread:
     def request_plugin_swap(self, index: int, plugin) -> None:
         self._swap_queue.put((index, plugin))
 
+    def set_bypass(self, on: bool) -> None:
+        """Escritura atómica de un bool: el GIL garantiza que el worker nunca
+        ve un estado a medio escribir, sin necesitar lock."""
+        self._bypass = on
+
     def _drain_swaps(self) -> None:
         while True:
             try:
@@ -274,6 +280,8 @@ class CaptureThread:
     def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
         """Una excepción de plugin no mata el worker: marca el estado y el
         audio sigue fluyendo sin procesar hasta que el usuario reinicie."""
+        if self._bypass:
+            return chunk
         if self._pipeline_failed:
             return chunk
         t0 = time.perf_counter()
@@ -330,6 +338,7 @@ class CaptureThread:
             "ring_fill": self._ring.fill if self._ring else 0,
             "drift_ppm": round(self._servo.ppm, 2) if self._servo else 0.0,
             "pipeline_failed": self._pipeline_failed,
+            "bypass": self._bypass,
             "stages": self._pipeline.stage_metrics(),
             "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
             "inference": _first_inference_status(self._pipeline._plugins),

@@ -35,6 +35,7 @@ def test_stats_initial_state():
         "ring_fill": 0,
         "drift_ppm": 0.0,
         "pipeline_failed": False,
+        "bypass": False,
         "stages": [],
         "total_latency_ms": 0.0,
         "inference": None,
