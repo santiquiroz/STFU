@@ -11,10 +11,57 @@ export interface DeviceInfo {
   is_default_output: boolean;
 }
 
+export interface ModelInfo {
+  id: string;
+  name: string;
+  version: string;
+  tier: "floor" | "default" | "quality" | "legacy";
+  size_mb: number;
+  algorithmic_latency_ms: number;
+  license: string;
+  supported_devices: string[];
+  tags: string[];
+  installed: boolean;
+}
+
+export interface InferenceStatus {
+  device: string | null;
+  degraded: boolean;
+}
+
+export interface StreamStats {
+  playback_active: boolean;
+  pipeline_failed: boolean;
+  worker_failed: boolean;
+  total_latency_ms: number;
+  stages: {
+    stage: string;
+    ema_ms: number;
+    p95_ms: number;
+    budget_ms: number;
+    overbudget: number;
+  }[];
+  inference?: InferenceStatus | null;
+}
+
+export interface ApoHealthEndpoint {
+  endpoint_guid: string;
+  flow: "Capture" | "Render";
+  state: "ok" | "deactivated" | "endpoint-missing";
+}
+
+export interface ApoHealth {
+  needs_repair: boolean;
+  endpoints: ApoHealthEndpoint[];
+}
+
 export interface StatusResponse {
   status: string;
   latency_ms: number;
   active: string[];
+  streams?: Record<string, StreamStats>;
+  apo?: Record<string, boolean>;
+  apo_health?: ApoHealth;
 }
 
 export interface PluginConfig {
@@ -168,4 +215,30 @@ export const api = {
         value,
       })
       .then((r) => r.data),
+
+  listModels: (): Promise<ModelInfo[]> =>
+    client.get("/models").then((r) => r.data),
+
+  downloadModel: (id: string): Promise<{ installed: boolean; path: string }> =>
+    client.post(`/models/${encodeURIComponent(id)}/download`).then((r) => r.data),
+
+  activateModel: (
+    id: string,
+    target: string,
+    device: string,
+  ): Promise<{ activated: string; target: string }> =>
+    client
+      .post(`/models/${encodeURIComponent(id)}/activate`, null, {
+        params: { target, device },
+      })
+      .then((r) => r.data),
+
+  deleteModel: (id: string): Promise<{ deleted: boolean }> =>
+    client.delete(`/models/${encodeURIComponent(id)}`).then((r) => r.data),
+
+  getApoHealth: (): Promise<ApoHealth> =>
+    client.get("/apo/health").then((r) => r.data),
+
+  repairApo: (): Promise<{ ok: boolean }> =>
+    client.post("/apo/repair").then((r) => r.data),
 };
