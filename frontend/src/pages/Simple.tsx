@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
 import { api } from "../services/api";
-import { Spinner, extractError } from "../components/ui";
+import { Spinner, extractError, Badge } from "../components/ui";
 
 function Toggle({
   on,
@@ -208,9 +208,25 @@ export function Simple() {
         </p>
       </div>
 
-      <p className="text-center text-zinc-600 text-xs">
-        {latency > 0 ? `Latencia: ${latency.toFixed(1)} ms` : "Latencia: —"}
-      </p>
+      <div className="flex flex-col items-center gap-2">
+        <p className="text-center text-zinc-600 text-xs">
+          {latency > 0 ? `Latencia: ${latency.toFixed(1)} ms` : "Latencia: —"}
+        </p>
+
+        {micOn && status?.streams?.feeder?.inference && (
+          <div className="flex gap-2">
+            {status.streams.feeder.inference.device && (
+              <Badge
+                label={status.streams.feeder.inference.device}
+                tone="green"
+              />
+            )}
+            {status.streams.feeder.inference.degraded && (
+              <Badge label="degradado" tone="red" />
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
