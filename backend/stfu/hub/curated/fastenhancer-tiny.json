@@ -1,0 +1,26 @@
+{
+  "id": "fastenhancer-tiny",
+  "name": "FastEnhancer Tiny (16 kHz)",
+  "version": "1.0.0",
+  "plugin_class": "stfu.plugins.onnx_streaming.OnnxStreamingPlugin",
+  "source": "url",
+  "url": "https://github.com/aask1357/fastenhancer/releases/download/onnx-dns-v1.0.0/fastenhancer_t.onnx",
+  "file": "fastenhancer_t.onnx",
+  "sha256": "a64663672b31bd1445502ee23328d291af13fb312e11bb574c010e7261a5ee7d",
+  "preferred_format": {"sample_rate": 16000, "channels": 1, "chunk_samples": 256},
+  "size_mb": 0.13,
+  "algorithmic_latency_ms": 16.0,
+  "tier": "floor",
+  "license": "MIT",
+  "supported_devices": ["cpu", "gpu"],
+  "io_spec": {
+    "audio_input": {"name": "wav_in", "shape": [1, "chunk"]},
+    "audio_output": "wav_out",
+    "states": [
+      {"input": "cache_in_0", "output": "cache_out_0", "shape": [1, 256]},
+      {"input": "cache_in_1", "output": "cache_out_1", "shape": [1, 256]},
+      {"input": "cache_in_2", "output": "cache_out_2", "shape": [1, 16, 20]},
+      {"input": "cache_in_3", "output": "cache_out_3", "shape": [1, 16, 20]}
+    ]
+  }
+}

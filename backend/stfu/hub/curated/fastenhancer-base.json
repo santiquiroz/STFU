@@ -1,0 +1,27 @@
+{
+  "id": "fastenhancer-base",
+  "name": "FastEnhancer Base (48 kHz)",
+  "version": "1.0.0",
+  "plugin_class": "stfu.plugins.onnx_streaming.OnnxStreamingPlugin",
+  "source": "url",
+  "url": "https://github.com/aask1357/fastenhancer/releases/download/onnx-48khz-v1/fastenhancer_b.onnx",
+  "file": "fastenhancer_b.onnx",
+  "sha256": "70e23bba3d41e80d30ebc5eba39d9df64f0e0315f31c772022bb17576c4d96bf",
+  "preferred_format": {"sample_rate": 48000, "channels": 1, "chunk_samples": 512},
+  "size_mb": 0.45,
+  "algorithmic_latency_ms": 10.67,
+  "tier": "quality",
+  "license": "MIT",
+  "supported_devices": ["cpu", "gpu"],
+  "io_spec": {
+    "audio_input": {"name": "wav_in", "shape": [1, "chunk"]},
+    "audio_output": "wav_out",
+    "states": [
+      {"input": "cache_in_0", "output": "cache_out_0", "shape": [1, 512]},
+      {"input": "cache_in_1", "output": "cache_out_1", "shape": [1, 512]},
+      {"input": "cache_in_2", "output": "cache_out_2", "shape": [1, 36, 36]},
+      {"input": "cache_in_3", "output": "cache_out_3", "shape": [1, 36, 36]},
+      {"input": "cache_in_4", "output": "cache_out_4", "shape": [1, 36, 36]}
+    ]
+  }
+}
