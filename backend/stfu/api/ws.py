@@ -7,7 +7,8 @@ async def metering_ws(websocket: WebSocket, get_metrics) -> None:
     await websocket.accept()
     try:
         while True:
-            await websocket.send_text(json.dumps(get_metrics()))
+            payload = await asyncio.to_thread(get_metrics)
+            await websocket.send_text(json.dumps(payload))
             await asyncio.sleep(0.1)
     except WebSocketDisconnect:
         pass
