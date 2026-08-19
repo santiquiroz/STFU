@@ -38,6 +38,13 @@ def test_stats_initial_state():
         "stages": [],
         "total_latency_ms": 0.0,
         "inference": None,
+        "audio": {
+            "pre_db": -120.0,
+            "post_db": -120.0,
+            "reduction_db": 0.0,
+            "spectrum_pre": [],
+            "spectrum_post": [],
+        },
     }
 
 

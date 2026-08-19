@@ -15,6 +15,12 @@ _INPUT_QUEUE_CHUNKS = 8
 _RING_CHUNKS = 8
 _TARGET_FILL_CHUNKS = 2
 _SERVO_UPDATE_EVERY_CHUNKS = 250  # ~5s con chunks de 20ms
+_SPECTRUM_UPDATE_EVERY_CHUNKS = 5  # rfft es caro: no correrlo cada chunk
+_SPECTRUM_BINS = 48
+_SPECTRUM_MIN_HZ = 20.0
+_SPECTRUM_MAX_HZ = 20000.0
+_DB_FLOOR = -120.0
+_EPS = 1e-9
 
 
 def _first_inference_status(plugins) -> dict | None:
@@ -25,6 +31,33 @@ def _first_inference_status(plugins) -> dict | None:
         if status is not None:
             return status
     return None
+
+
+def _rms_db(audio: np.ndarray) -> float:
+    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
+    return max(_DB_FLOOR, 20.0 * np.log10(rms + _EPS))
+
+
+def _mono_mix(audio: np.ndarray) -> np.ndarray:
+    if audio.ndim == 1:
+        return audio
+    return audio.mean(axis=1)
+
+
+def _log_spaced_spectrum_db(mono: np.ndarray, sample_rate: int) -> list:
+    """Magnitud del rfft agrupada en bins log-espaciados (20Hz..20kHz), en dB."""
+    magnitudes = np.abs(np.fft.rfft(mono))
+    freqs = np.fft.rfftfreq(len(mono), d=1.0 / sample_rate)
+    edges = np.geomspace(_SPECTRUM_MIN_HZ, _SPECTRUM_MAX_HZ, _SPECTRUM_BINS + 1)
+    bins_db = []
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        mask = (freqs >= lo) & (freqs < hi)
+        if np.any(mask):
+            magnitude = float(magnitudes[mask].mean())
+            bins_db.append(max(_DB_FLOOR, 20.0 * np.log10(magnitude + _EPS)))
+        else:
+            bins_db.append(_DB_FLOOR)
+    return bins_db
 
 
 def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
@@ -79,6 +112,11 @@ class CaptureThread:
         self._queue_drops: int = 0
         self._worker_failed: bool = False
         self._chunks_since_update: int = 0
+        self._audio_pre_db: float = _DB_FLOOR
+        self._audio_post_db: float = _DB_FLOOR
+        self._spectrum_pre: list = []
+        self._spectrum_post: list = []
+        self._chunks_since_spectrum: int = 0
 
     def start(self) -> None:
         self._pipeline.compile(self._fmt)
@@ -194,6 +232,7 @@ class CaptureThread:
 
     def _process_and_output(self, chunk: np.ndarray) -> None:
         processed = self._process_or_passthrough(chunk)
+        self._record_audio_telemetry(chunk, processed)
         if self._output_stream is None:
             return
         out = _adjust_channels(processed, self._out_channels)
@@ -204,6 +243,19 @@ class CaptureThread:
         if self._chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
             self._servo.update()
             self._chunks_since_update = 0
+
+    def _record_audio_telemetry(self, pre: np.ndarray, post: np.ndarray) -> None:
+        """RMS pre/post es barato y corre cada chunk; el rfft del espectro es
+        caro y solo corre cada _SPECTRUM_UPDATE_EVERY_CHUNKS para no comerse
+        el presupuesto de 20ms del worker."""
+        self._audio_pre_db = _rms_db(pre)
+        self._audio_post_db = _rms_db(post)
+        self._chunks_since_spectrum += 1
+        if self._chunks_since_spectrum < _SPECTRUM_UPDATE_EVERY_CHUNKS:
+            return
+        self._chunks_since_spectrum = 0
+        self._spectrum_pre = _log_spaced_spectrum_db(_mono_mix(pre), self._fmt.sample_rate)
+        self._spectrum_post = _log_spaced_spectrum_db(_mono_mix(post), self._fmt.sample_rate)
 
     def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
         """Una excepción de plugin no mata el worker: marca el estado y el
@@ -267,6 +319,13 @@ class CaptureThread:
             "stages": self._pipeline.stage_metrics(),
             "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
             "inference": _first_inference_status(self._pipeline._plugins),
+            "audio": {
+                "pre_db": round(self._audio_pre_db, 1),
+                "post_db": round(self._audio_post_db, 1),
+                "reduction_db": round(self._audio_pre_db - self._audio_post_db, 1),
+                "spectrum_pre": self._spectrum_pre,
+                "spectrum_post": self._spectrum_post,
+            },
         }
 
 
