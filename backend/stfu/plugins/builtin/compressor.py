@@ -35,10 +35,13 @@ class CompressorPlugin(AudioPlugin):
         self._makeup_db = _DEFAULT_MAKEUP_DB
         self._agc = _DEFAULT_AGC
         self._agc_target_db = _DEFAULT_AGC_TARGET_DB
-        # estado persistente entre chunks: envolvente de nivel (dB) y
-        # ganancia lenta de AGC (dB)
+        # estado persistente entre chunks: envolvente de nivel (dB), y
+        # ganancia lenta de AGC (dB) — se guarda el valor previo además del
+        # actual para poder rampearla igual que la envolvente de compresión
+        # y evitar saltos de ganancia (zipper noise) en el borde de chunk
         self._envelope_db = _FLOOR_DB
         self._agc_gain_db = 0.0
+        self._prev_agc_gain_db = 0.0
         self._build_coefficients()
 
     @property
@@ -49,6 +52,7 @@ class CompressorPlugin(AudioPlugin):
         self._sample_rate = fmt.sample_rate
         self._envelope_db = _FLOOR_DB
         self._agc_gain_db = 0.0
+        self._prev_agc_gain_db = 0.0
         self._build_coefficients()
         return fmt
 
@@ -58,12 +62,17 @@ class CompressorPlugin(AudioPlugin):
         env_ramp_db = self._advance_envelope(audio, n_samples)
         gain_db = self._compression_gain_db(env_ramp_db) + self._makeup_db
         if self._agc:
-            gain_db = gain_db + self._agc_gain_db
+            gain_db = gain_db + self._agc_gain_ramp(n_samples)
         gain_lin = (10.0 ** (gain_db / 20.0)).astype(np.float32)
         out = audio * gain_lin.reshape(-1, 1)
         if self._agc:
             self._update_agc_gain(out)
         return out
+
+    def _agc_gain_ramp(self, n_samples: int) -> np.ndarray:
+        # rampea desde la ganancia AGC vigente al final del chunk anterior
+        # hasta el objetivo ya decidido, en vez de aplicarlo como escalón
+        return np.linspace(self._prev_agc_gain_db, self._agc_gain_db, num=n_samples, dtype=np.float32)
 
     def _advance_envelope(self, audio: np.ndarray, n_samples: int) -> np.ndarray:
         old_env_db = self._envelope_db
@@ -82,6 +91,7 @@ class CompressorPlugin(AudioPlugin):
     def _update_agc_gain(self, out: np.ndarray) -> None:
         error_db = self._agc_target_db - _rms_db(out)
         step_db = np.clip(error_db * _AGC_STEP_FACTOR, -_AGC_MAX_STEP_DB, _AGC_MAX_STEP_DB)
+        self._prev_agc_gain_db = self._agc_gain_db
         self._agc_gain_db = float(np.clip(self._agc_gain_db + step_db, -_AGC_MAX_GAIN_DB, _AGC_MAX_GAIN_DB))
 
     def teardown(self) -> None:

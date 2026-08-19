@@ -59,3 +59,20 @@ def test_output_shape_dtype():
     c = _comp()
     out = c.process(_tone(0.3, n=960))
     assert out.shape == (960, 1) and out.dtype == np.float32
+
+
+def test_compression_and_agc_together_converge_and_stay_stable():
+    # ratio alto + umbral agresivo: la compresión estática ya deja el nivel
+    # lejos del target de AGC, forzando a los dos lazos (envolvente de
+    # compresión + ganancia lenta de AGC) a actuar sobre la misma señal
+    c = _comp(agc=True, agc_target_db=-18.0, threshold_db=-30.0, ratio=6.0)
+    tone = _tone(0.3)
+    out = _run(c, tone)
+    n_chunks = len(out) // 960
+    chunk_rms_db = [_rms_db(out[i * 960:(i + 1) * 960]) for i in range(n_chunks)]
+
+    final_level_db = chunk_rms_db[-1]
+    assert abs(final_level_db - (-18.0)) < 3.0  # convergió cerca del target
+
+    tail = chunk_rms_db[-5:]
+    assert max(tail) - min(tail) < 1.5  # estable, sin oscilar ni divergir
