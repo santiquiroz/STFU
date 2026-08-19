@@ -43,19 +43,22 @@ app.include_router(apo_router)
 app.include_router(feeder_router)
 
 
-@app.get("/status")
-def status():
+def _status_payload() -> dict:
+    from stfu.apo.apo_engine import apo_engine
     return {
         "status": "ok",
         "latency_ms": engine.get_latency_ms(),
         "active": engine.active_targets(),
         "streams": engine.get_stats(),
+        "apo": apo_engine.status(),
     }
+
+
+@app.get("/status")
+def status():
+    return _status_payload()
 
 
 @app.websocket("/ws/metering")
 async def ws_metering(websocket: WebSocket):
-    await metering_ws(websocket, lambda: {
-        "latency_ms": engine.get_latency_ms(),
-        "active": engine.active_targets(),
-    })
+    await metering_ws(websocket, _status_payload)
