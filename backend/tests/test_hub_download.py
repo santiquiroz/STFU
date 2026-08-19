@@ -86,3 +86,46 @@ def test_delete_rejects_backslash_traversal(hub, tmp_path):
         hub.delete("..\\..\\y", active_ids=set())
     assert sentinel.exists()
     assert (sentinel / "canary.txt").read_text() == "intact"
+
+
+def test_delete_rejects_identity_dot(hub):
+    hub.download("fastenhancer-tiny")
+    base_dir = hub._registry.base_dir
+    sentinel = base_dir / "sentinel.txt"
+    sentinel.write_text("intact")
+    with pytest.raises(ValueError):
+        hub.delete(".", active_ids=set())
+    assert base_dir.exists()
+    assert sentinel.read_text() == "intact"
+    assert hub.catalog()[0]["installed"] is True
+
+
+def test_delete_rejects_identity_dotdot(hub):
+    hub.download("fastenhancer-tiny")
+    base_dir = hub._registry.base_dir
+    sentinel = base_dir / "sentinel.txt"
+    sentinel.write_text("intact")
+    with pytest.raises(ValueError):
+        hub.delete("..", active_ids=set())
+    assert base_dir.exists()
+    assert sentinel.read_text() == "intact"
+    assert hub.catalog()[0]["installed"] is True
+
+
+def test_delete_identity_dot_via_api_returns_4xx(monkeypatch, tmp_path):
+    import stfu.api.routes.models as models_route
+    from fastapi.testclient import TestClient
+    from stfu.hub.registry import ModelRegistry
+    from stfu.main import app
+
+    registry = ModelRegistry(tmp_path / "api_models")
+    sentinel = registry.base_dir / "sentinel.txt"
+    sentinel.write_text("intact")
+    monkeypatch.setattr(models_route, "default_registry", lambda: registry)
+
+    client = TestClient(app)
+    r = client.delete("/models/%2E")
+
+    assert 400 <= r.status_code < 500
+    assert registry.base_dir.exists()
+    assert sentinel.read_text() == "intact"

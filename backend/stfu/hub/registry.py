@@ -8,6 +8,11 @@ _ID_PATTERN = re.compile(r'^[A-Za-z0-9_.\-]{1,64}$')
 _DANGEROUS_TOKENS = frozenset({
     '__builtins__', 'builtins', 'os', 'subprocess', 'sys', 'importlib', 'eval', 'exec',
 })
+_DOT_ONLY_IDS = frozenset({'.', '..'})
+
+
+def _is_dot_only(value: str) -> bool:
+    return value in _DOT_ONLY_IDS
 
 
 class TensorSpec(BaseModel):
@@ -50,10 +55,10 @@ class ModelManifest(BaseModel):
     @field_validator('id')
     @classmethod
     def validate_id(cls, v: str) -> str:
-        if not _ID_PATTERN.match(v):
+        if not _ID_PATTERN.match(v) or _is_dot_only(v):
             raise ValueError(
                 f"Model id {v!r} is invalid: must match [A-Za-z0-9_.-]{{1,64}} "
-                "and must not contain path separators or '..'."
+                "and must not be '.', '..', or contain path separators."
             )
         return v
 
@@ -88,8 +93,11 @@ class ModelManifest(BaseModel):
 
 
 def _assert_contained(base_dir: Path, id: str) -> None:
+    resolved_base = base_dir.resolve()
     resolved = (base_dir / id).resolve()
-    if not resolved.is_relative_to(base_dir.resolve()):
+    escapes_base = not resolved.is_relative_to(resolved_base)
+    is_base_itself = resolved == resolved_base
+    if escapes_base or is_base_itself:
         raise ValueError(f"Model id {id!r} escapes base directory")
 
 
