@@ -218,7 +218,7 @@ export function Simple() {
             {status.streams.feeder.inference.device && (
               <Badge
                 label={status.streams.feeder.inference.device}
-                tone="green"
+                tone="blue"
               />
             )}
             {status.streams.feeder.inference.degraded && (

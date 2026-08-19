@@ -5,15 +5,25 @@ import {
   useDownloadModel,
   useModels,
 } from "../hooks/useModels";
+import { usePipelineStatus } from "../hooks/usePipeline";
 import { extractError, Spinner } from "../components/ui";
 import { ModelCard } from "../components/ModelCard";
 
+// El swap en vivo requiere un stream ya corriendo; el backend solo expone en
+// `streams` los targets con hilo activo, así que su primera clave es el destino real.
+function deriveActiveTarget(streams: Record<string, unknown> | undefined): string | null {
+  return Object.keys(streams ?? {})[0] ?? null;
+}
+
 export function Models() {
   const { data: models, isLoading, isError, error } = useModels();
+  const { data: status } = usePipelineStatus();
   const downloadMutation = useDownloadModel();
   const activateMutation = useActivateModel();
   const deleteMutation = useDeleteModel();
   const [activeModelId, setActiveModelId] = useState<string | null>(null);
+
+  const activeTarget = deriveActiveTarget(status?.streams);
 
   function handleActivate(id: string, target: string, device: string) {
     activateMutation.mutate(
@@ -54,6 +64,7 @@ export function Models() {
               key={model.id}
               model={model}
               active={activeModelId === model.id}
+              activeTarget={activeTarget}
               downloading={downloadMutation.isPending && downloadMutation.variables === model.id}
               activating={
                 activateMutation.isPending && activateMutation.variables?.id === model.id

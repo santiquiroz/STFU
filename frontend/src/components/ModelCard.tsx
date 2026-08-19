@@ -5,6 +5,7 @@ import { Badge, Card, Spinner, TierBadge } from "./ui";
 interface ModelCardProps {
   model: ModelInfo;
   active: boolean;
+  activeTarget: string | null;
   downloading: boolean;
   activating: boolean;
   deleting: boolean;
@@ -95,12 +96,6 @@ function ActivatePanel({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-zinc-700 bg-zinc-900/60 p-3">
       <label className="flex flex-col gap-1 text-xs text-zinc-400">
-        Destino
-        <select disabled value="mic" className={selectClasses}>
-          <option value="mic">Micrófono</option>
-        </select>
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-zinc-400">
         Device
         <select
           value={device}
@@ -129,6 +124,7 @@ function ActivatePanel({
 export function ModelCard({
   model,
   active,
+  activeTarget,
   downloading,
   activating,
   deleting,
@@ -140,13 +136,19 @@ export function ModelCard({
   onDelete,
 }: ModelCardProps) {
   const [panelOpen, setPanelOpen] = useState(false);
+  const canActivate = activeTarget !== null;
 
   useEffect(() => {
     if (active) setPanelOpen(false);
   }, [active]);
 
+  // Sin stream corriendo no hay swap posible: cerrar el panel si el mic se apaga.
+  useEffect(() => {
+    if (!canActivate) setPanelOpen(false);
+  }, [canActivate]);
+
   function handleConfirmActivate(device: string) {
-    onActivate("mic", device);
+    if (activeTarget) onActivate(activeTarget, device);
   }
 
   return (
@@ -194,6 +196,8 @@ export function ModelCard({
             <div className="flex gap-2">
               <button
                 onClick={() => setPanelOpen((open) => !open)}
+                disabled={!canActivate}
+                title={canActivate ? undefined : "Activá el micrófono primero (pestaña Control)"}
                 className={`flex-1 ${panelOpen ? ghostButtonClasses : primaryButtonClasses}`}
               >
                 {panelOpen ? "Cancelar" : "Activar"}
