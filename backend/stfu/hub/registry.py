@@ -1,12 +1,30 @@
 import re
 import shutil
 from pathlib import Path
+from typing import Literal
 from pydantic import BaseModel, field_validator
 
 _ID_PATTERN = re.compile(r'^[A-Za-z0-9_.\-]{1,64}$')
 _DANGEROUS_TOKENS = frozenset({
     '__builtins__', 'builtins', 'os', 'subprocess', 'sys', 'importlib', 'eval', 'exec',
 })
+
+
+class TensorSpec(BaseModel):
+    name: str
+    shape: list[int | str]
+
+
+class StateSpec(BaseModel):
+    input: str
+    output: str
+    shape: list[int]
+
+
+class IoSpec(BaseModel):
+    audio_input: TensorSpec
+    audio_output: str
+    states: list[StateSpec] = []
 
 
 class ModelManifest(BaseModel):
@@ -17,10 +35,17 @@ class ModelManifest(BaseModel):
     source: str
     file: str
     preferred_format: dict
-    supported_backends: list[str]
     size_mb: float
     algorithmic_latency_ms: float
     tags: list[str] = []
+    tier: Literal["floor", "default", "quality", "legacy"] = "default"
+    license: str = ""
+    hf_repo: str | None = None
+    url: str | None = None
+    sha256: str | None = None
+    supported_devices: list[str] = ["cpu", "gpu"]
+    io_spec: IoSpec | None = None
+    supported_backends: list[str] = []
 
     @field_validator('id')
     @classmethod
