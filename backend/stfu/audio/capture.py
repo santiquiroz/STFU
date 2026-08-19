@@ -247,15 +247,29 @@ class CaptureThread:
     def _record_audio_telemetry(self, pre: np.ndarray, post: np.ndarray) -> None:
         """RMS pre/post es barato y corre cada chunk; el rfft del espectro es
         caro y solo corre cada _SPECTRUM_UPDATE_EVERY_CHUNKS para no comerse
-        el presupuesto de 20ms del worker."""
-        self._audio_pre_db = _rms_db(pre)
-        self._audio_post_db = _rms_db(post)
-        self._chunks_since_spectrum += 1
-        if self._chunks_since_spectrum < _SPECTRUM_UPDATE_EVERY_CHUNKS:
+        el presupuesto de 20ms del worker. Es observabilidad, nunca debe
+        tumbar el worker: un chunk malformado (p.ej. un plugin que devuelve
+        un array vacío sin lanzar excepción) degrada la telemetría de este
+        tick en vez de matar el audio. Por eso se calcula todo en variables
+        locales y solo se confirma en self si nada explotó."""
+        try:
+            pre_db = _rms_db(pre)
+            post_db = _rms_db(post)
+            chunks_since_spectrum = self._chunks_since_spectrum + 1
+            spectrum_pre = self._spectrum_pre
+            spectrum_post = self._spectrum_post
+            if chunks_since_spectrum >= _SPECTRUM_UPDATE_EVERY_CHUNKS:
+                chunks_since_spectrum = 0
+                spectrum_pre = _log_spaced_spectrum_db(_mono_mix(pre), self._fmt.sample_rate)
+                spectrum_post = _log_spaced_spectrum_db(_mono_mix(post), self._fmt.sample_rate)
+        except Exception:
+            _log.exception("telemetría de audio falló para este chunk; se mantienen valores previos")
             return
-        self._chunks_since_spectrum = 0
-        self._spectrum_pre = _log_spaced_spectrum_db(_mono_mix(pre), self._fmt.sample_rate)
-        self._spectrum_post = _log_spaced_spectrum_db(_mono_mix(post), self._fmt.sample_rate)
+        self._audio_pre_db = pre_db
+        self._audio_post_db = post_db
+        self._chunks_since_spectrum = chunks_since_spectrum
+        self._spectrum_pre = spectrum_pre
+        self._spectrum_post = spectrum_post
 
     def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
         """Una excepción de plugin no mata el worker: marca el estado y el

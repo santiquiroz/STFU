@@ -65,3 +65,18 @@ def test_silence_reduction_zero_ish():
     z = np.zeros((960, 2), dtype=np.float32)
     t._record_audio_telemetry(z, z)
     assert abs(t.stats["audio"]["reduction_db"]) < 1.0
+
+
+def test_telemetry_exception_does_not_propagate():
+    p = Pipeline()
+    t = _thread(p)
+    good = np.ones((960, 2), dtype=np.float32) * 0.1
+    bad = np.zeros((0, 2), dtype=np.float32)  # simula un plugin que devuelve un array vacío
+    for _ in range(4):  # N=5 en capture.py: deja el contador a una llamada del cálculo de espectro
+        t._record_audio_telemetry(good, good)
+    prev_audio = dict(t.stats["audio"])
+
+    t._record_audio_telemetry(good, bad)  # 5ta llamada: dispara rfft con post vacío
+
+    assert t.worker_failed is False
+    assert t.stats["audio"] == prev_audio  # valores previos retenidos, no crashea ni pisa
