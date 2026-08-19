@@ -59,6 +59,10 @@ class CaptureThread:
         self._worker: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._latency_ms: float = 0.0
+        self._pipeline_failed = False
+        # Invariante: cada contador tiene UN solo hilo escritor (input CB o
+        # output CB); con el GIL los += no pierden updates. No agregar
+        # escritores sin repensar esto.
         self._input_overflows: int = 0
         self._output_underflows: int = 0
         self._queue_drops: int = 0
@@ -127,9 +131,7 @@ class CaptureThread:
                 chunk = self._in_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            t0 = time.perf_counter()
-            processed = self._pipeline.process(chunk)
-            self._latency_ms = (time.perf_counter() - t0) * 1000.0
+            processed = self._process_or_passthrough(chunk)
             if self._output_stream is None:
                 continue
             out = _adjust_channels(processed, self._out_channels)
@@ -140,6 +142,21 @@ class CaptureThread:
             if chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
                 self._servo.update()
                 chunks_since_update = 0
+
+    def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
+        """Una excepción de plugin no mata el worker: marca el estado y el
+        audio sigue fluyendo sin procesar hasta que el usuario reinicie."""
+        if self._pipeline_failed:
+            return chunk
+        t0 = time.perf_counter()
+        try:
+            processed = self._pipeline.process(chunk)
+        except Exception:
+            _log.exception("pipeline crashed; el target continúa en passthrough")
+            self._pipeline_failed = True
+            return chunk
+        self._latency_ms = (time.perf_counter() - t0) * 1000.0
+        return processed
 
     def _input_callback(
         self, indata: np.ndarray, frames: int, time_info, status
@@ -179,6 +196,9 @@ class CaptureThread:
             "queue_drops": self._queue_drops + (self._ring.overflows if self._ring else 0),
             "ring_fill": self._ring.fill if self._ring else 0,
             "drift_ppm": round(self._servo.ppm, 2) if self._servo else 0.0,
+            "pipeline_failed": self._pipeline_failed,
+            "stages": self._pipeline.stage_metrics(),
+            "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
         }
 
 
