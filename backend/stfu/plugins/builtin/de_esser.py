@@ -115,6 +115,7 @@ class DeEsserPlugin(AudioPlugin):
         ]
 
     def set_parameter(self, id: str, value) -> None:
+        value = self._clamp_param(id, value)
         if id == "freq_hz":
             self._freq_hz = float(value)
             self._build_filter()

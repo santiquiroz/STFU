@@ -59,3 +59,23 @@ class AudioPlugin(ABC):
 
     def set_parameter(self, id: str, value: Any) -> None:
         pass
+
+    def _clamp_param(self, id: str, value: Any) -> Any:
+        """Clampea/valida un valor de parámetro contra su Parameter declarado.
+        Params float/int se clampean a [min,max]; params enum caen al default
+        si el valor no está en options; ids desconocidos pasan sin tocar."""
+        param = next((p for p in self.parameters if p.id == id), None)
+        if param is None:
+            return value
+        if param.type in ("float", "int"):
+            v = float(value)
+            if param.min is not None:
+                v = max(v, float(param.min))
+            if param.max is not None:
+                v = min(v, float(param.max))
+            return int(round(v)) if param.type == "int" else v
+        if param.type == "enum":
+            return value if (param.options and value in param.options) else param.default
+        if param.type == "bool":
+            return bool(value)
+        return value

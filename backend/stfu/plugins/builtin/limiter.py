@@ -82,6 +82,7 @@ class LimiterPlugin(AudioPlugin):
         ]
 
     def set_parameter(self, id: str, value) -> None:
+        value = self._clamp_param(id, value)
         if id == "ceiling_db":
             self._ceiling_db = float(value)
         elif id == "release_ms":

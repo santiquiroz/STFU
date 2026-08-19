@@ -121,6 +121,7 @@ class CompressorPlugin(AudioPlugin):
         ]
 
     def set_parameter(self, id: str, value) -> None:
+        value = self._clamp_param(id, value)
         if id == "threshold_db":
             self._threshold_db = float(value)
         elif id == "ratio":

@@ -33,5 +33,6 @@ class GainPlugin(AudioPlugin):
                           default=0.0, min=-24.0, max=24.0)]
 
     def set_parameter(self, id: str, value) -> None:
+        value = self._clamp_param(id, value)
         if id == "gain_db":
             self._linear = 10 ** (float(value) / 20.0)
