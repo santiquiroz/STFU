@@ -34,3 +34,18 @@ def test_save_and_get_user_preset(tmp_path, monkeypatch):
 def test_delete_curated_rejected():
     r = client.delete("/presets/Gaming")
     assert r.status_code in (400, 409)
+
+
+def test_delete_accented_curated_rejected():
+    # regresión: el lookup curado por stem de archivo ("musica.json") no
+    # matcheaba el name mostrado ("Música") salvo por accidente de
+    # case-insensitivity de NTFS en nombres ASCII — esto lo fija en firme.
+    got = client.get("/presets/Música")
+    assert got.status_code == 200
+    assert got.json()["name"] == "Música"
+
+    r = client.delete("/presets/Música")
+    assert r.status_code == 409
+
+    r2 = client.delete("/presets/Reunión")
+    assert r2.status_code == 409
