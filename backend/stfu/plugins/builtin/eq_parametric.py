@@ -79,6 +79,7 @@ class EQParametricPlugin(AudioPlugin):
         return params
 
     def set_parameter(self, id: str, value) -> None:
+        value = self._clamp_param(id, value)
         for i, b in enumerate(self._bands, 1):
             if id == f"band_{i}_freq":
                 b["freq"] = float(value)

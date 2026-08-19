@@ -6,9 +6,22 @@ from stfu.core.pipeline import Pipeline
 from stfu.hub.registry import ModelRegistry
 from stfu.plugins.builtin.eq_parametric import EQParametricPlugin
 from stfu.plugins.builtin.gain import GainPlugin
+from stfu.plugins.builtin.noise_gate import NoiseGatePlugin
+from stfu.plugins.builtin.compressor import CompressorPlugin
+from stfu.plugins.builtin.de_esser import DeEsserPlugin
+from stfu.plugins.builtin.limiter import LimiterPlugin
 
 _MODEL_PREFIX = "model:"
 _registry_singleton: ModelRegistry | None = None
+
+BUILTIN_PLUGINS = {
+    "gain": GainPlugin,
+    "eq_parametric": EQParametricPlugin,
+    "noise_gate": NoiseGatePlugin,
+    "compressor": CompressorPlugin,
+    "de_esser": DeEsserPlugin,
+    "limiter": LimiterPlugin,
+}
 
 
 def default_registry() -> ModelRegistry:
@@ -42,8 +55,7 @@ def _make_plugin(plugin_id: str, registry: ModelRegistry | None, device: str):
         return _build_model_plugin(plugin_id[len(_MODEL_PREFIX):], reg, device)
     if plugin_id == "deepfilternet3":
         return _build_dfn3()
-    builtin = {"eq_parametric": EQParametricPlugin, "gain": GainPlugin}
-    cls = builtin.get(plugin_id)
+    cls = BUILTIN_PLUGINS.get(plugin_id)
     if cls is None:
         raise ValueError(f"Plugin desconocido: {plugin_id}")
     return cls()

@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from stfu.api.routes.pipeline import ParameterUpdate, PluginConfig
+from stfu.api.routes.pipeline import BypassUpdate, ParameterUpdate, PluginConfig
 from stfu.audio.devices import BRIDGE_RENDER_NAME, find_bridge_output
 from stfu.audio.engine import engine
 
@@ -87,8 +87,16 @@ def feeder_stop():
 def feeder_parameter(update: ParameterUpdate):
     try:
         ok = engine.set_parameter(_TARGET, update.plugin_index, update.parameter_id, update.value)
-    except IndexError as exc:
+    except (IndexError, ValueError, ZeroDivisionError, TypeError) as exc:
         raise HTTPException(400, str(exc))
     if not ok:
         raise HTTPException(404, "feeder no está activo")
     return {"ok": True}
+
+
+@router.post("/bypass")
+def feeder_bypass(update: BypassUpdate):
+    ok = engine.set_bypass(_TARGET, update.on)
+    if not ok:
+        raise HTTPException(404, "feeder no está activo")
+    return {"ok": True, "bypass": update.on}

@@ -99,6 +99,14 @@ class AudioEngine:
         thread.pipeline.set_parameter(plugin_index, param_id, value)
         return True
 
+    def set_bypass(self, target: str, on: bool) -> bool:
+        with self._lock:
+            thread = self._threads.get(target)
+        if thread is None:
+            return False
+        thread.set_bypass(on)
+        return True
+
     def swap_model(self, target: str, model_id: str, device: str = "auto") -> bool:
         """Activa un modelo NC en el pipeline vivo. El plugin se construye y
         warmupea (sesión ONNX creada) en este hilo; el worker hace el swap
