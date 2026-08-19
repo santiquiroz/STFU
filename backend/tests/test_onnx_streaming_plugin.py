@@ -112,6 +112,39 @@ def test_probe_nan_rejection(manifest, monkeypatch):
     assert plugin._session is None
 
 
+def test_process_falls_back_to_dry_on_runtime_nan(manifest):
+    """Session emits NaN after a successful probe → process() returns dry input."""
+    plugin = _plugin(manifest)
+
+    def nan_run(output_names, input_feed):
+        return [np.full((_CHUNK, 1), np.nan, dtype=np.float32) for _ in output_names]
+
+    plugin._session.run = nan_run
+    chunk = np.ones((_CHUNK, 1), dtype=np.float32)
+    out = plugin.process(chunk)
+
+    assert np.isfinite(out).all()
+    np.testing.assert_array_equal(out, chunk)
+    assert plugin._nan_warned is True
+
+
+def test_process_nan_warning_logged_once(manifest, caplog):
+    plugin = _plugin(manifest)
+
+    def nan_run(output_names, input_feed):
+        return [np.full((_CHUNK, 1), np.nan, dtype=np.float32) for _ in output_names]
+
+    plugin._session.run = nan_run
+    chunk = np.ones((_CHUNK, 1), dtype=np.float32)
+
+    with caplog.at_level("WARNING", logger="stfu.plugins.onnx_streaming"):
+        plugin.process(chunk)
+        plugin.process(chunk)
+
+    nan_warnings = [r for r in caplog.records if "NaN" in r.message]
+    assert len(nan_warnings) == 1
+
+
 def test_probe_exception_raises_device_unavailable(manifest, monkeypatch):
     """Probe exception on InferenceSession creation raises DeviceUnavailable."""
     from stfu.plugins.onnx_streaming import OnnxStreamingPlugin

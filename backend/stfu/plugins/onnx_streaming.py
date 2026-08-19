@@ -26,6 +26,7 @@ class OnnxStreamingPlugin(AudioPlugin):
         self._states: dict[str, np.ndarray] = {}
         self._strength: float = 1.0
         self._active_device: str | None = None
+        self._nan_warned: bool = False
 
     @property
     def name(self) -> str:
@@ -72,7 +73,19 @@ class OnnxStreamingPlugin(AudioPlugin):
         dry = audio
         wet = self._run(audio)
         s = self._strength
-        return (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
+        out = (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
+        if not np.isfinite(out).all():
+            self._warn_nan_once()
+            return dry
+        return out
+
+    def _warn_nan_once(self) -> None:
+        if not self._nan_warned:
+            _log.warning(
+                "modelo %s produjo NaN/Inf en runtime — usando passthrough dry",
+                self._manifest.id,
+            )
+            self._nan_warned = True
 
     def _run(self, audio: np.ndarray) -> np.ndarray:
         spec = self._manifest.io_spec
