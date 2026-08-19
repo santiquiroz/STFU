@@ -53,19 +53,23 @@ class Pipeline:
         self._input_format = None
 
     def compile(self, input_format: AudioFormat) -> None:
-        self._stages.clear()
         self._input_format = input_format
         self._out_buffer = np.empty((0, input_format.channels), dtype=np.float32)
         budget_ms = input_format.chunk_samples / input_format.sample_rate * 1000.0
-        self._stage_metrics = [
+        stage_metrics = [
             StageMetrics(p.name, budget_ms=budget_ms) for p in self._plugins
         ]
+        stages: list[tuple[Optional[FormatAdapter], AudioPlugin]] = []
         current = input_format
         for plugin in self._plugins:
             pref = plugin.preferred_format
             adapter = FormatAdapter(current, pref) if current != pref else None
-            self._stages.append((adapter, plugin))
+            stages.append((adapter, plugin))
             current = plugin.setup(pref if adapter else current)
+        # Reasignación en bloque: un lector concurrente (total_latency_ms desde el
+        # hilo de API) nunca ve una lista a medio construir.
+        self._stages = stages
+        self._stage_metrics = stage_metrics
         self._output_adapter = (
             FormatAdapter(current, input_format) if current != input_format else None
         )
