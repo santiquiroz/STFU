@@ -25,7 +25,7 @@ def test_tick_tolerates_check_exception():
     mon._tick()  # no debe propagar
 
 
-def test_recovery_reArms_the_warning():
+def test_recovery_reArms_the_warning(caplog):
     states = [
         [{"endpoint_guid": "g", "flow": "Capture", "state": "deactivated"}],
         [{"endpoint_guid": "g", "flow": "Capture", "state": "ok"}],
@@ -37,12 +37,10 @@ def test_recovery_reArms_the_warning():
 
     mon = ApoHealthMonitor(check, interval_s=999)
     import logging
-    import pytest
-    # 1ra degradación loguea; recuperación re-arma; 2da degradación vuelve a loguear
-    log_counts = []
-    for _ in range(3):
-        before = len(mon._logged_degraded)
-        mon._tick()
-        log_counts.append(mon._warned)
-    # tras recovery (_tick 2) el flag se limpia y la 3ra degradación re-loguea
+    with caplog.at_level(logging.WARNING):
+        mon._tick()  # 1ra degradación: loguea y arma _warned
+        mon._tick()  # recovery: limpia _warned
+        mon._tick()  # 2da degradación: re-arma → debe volver a loguear
+    warnings = [r for r in caplog.records if "APO" in r.message or "apo" in r.message.lower()]
+    assert len(warnings) == 2         # logueado en cada degradación, no solo la primera
     assert mon._warned is True

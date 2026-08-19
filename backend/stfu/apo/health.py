@@ -2,13 +2,9 @@
 silencio tras un cumulative update, y reinstalar un driver de audio borra el
 endpoint. Este módulo compara los endpoints donde registramos (backups) contra
 su estado real — solo lee el registro, no requiere admin."""
-import logging
-
 from stfu.apo.constants import CLSID_BY_FLOW
-from stfu.apo.endpoint_finder import _device_state, _flow_key, _STATE_ACTIVE
+from stfu.apo.endpoint_finder import _device_state, _flow_key
 from stfu.apo.register import _load_backups, get_apo_status
-
-_log = logging.getLogger(__name__)
 
 
 def _parse_backup_key(key: str) -> tuple[str, str]:

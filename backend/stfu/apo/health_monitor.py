@@ -14,7 +14,6 @@ class ApoHealthMonitor:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._warned = False
-        self._logged_degraded: set = set()
 
     def start(self) -> None:
         self._stop_event.clear()
