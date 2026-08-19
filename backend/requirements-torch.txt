@@ -1,3 +1,8 @@
 # Extra opcional: DeepFilterNet3 legacy (torch). El lineup ONNX no lo necesita.
+# Python 3.11: deepfilterlib solo publica wheels prebuilt hasta cp311 (no cp312+).
+# DeepFilterNet 0.5.6 usa torchaudio.backend.common.AudioMetaData, removido en
+# torchaudio>=2.2 — fijar el par torch/torchaudio a 2.1.x.
 -r requirements.txt
 deepfilternet>=0.5.6
+torch>=2.1,<2.2
+torchaudio>=2.1,<2.2

@@ -35,7 +35,9 @@ static
 KSDATAFORMAT_WAVEFORMATEXTENSIBLE MicArrayPinSupportedDeviceFormats[] =
 {
     //------------------------------------------------------------------------
-    // 48 KHz, 32-bit, 2 channels (Stereo)
+    // 48 KHz, 16-bit, 2 channels (Stereo)
+    // Loopback: formato por defecto = el que anuncia el speaker/Bridge, para que
+    // el mix format compartido de WASAPI coincida y Put/Take sean byte-compatibles.
     //------------------------------------------------------------------------
     {
         {
@@ -52,12 +54,12 @@ KSDATAFORMAT_WAVEFORMATEXTENSIBLE MicArrayPinSupportedDeviceFormats[] =
                 WAVE_FORMAT_EXTENSIBLE,       // wFormatTag
                 2,                           // nChannels
                 48000,                       // nSamplesPerSec
-                48000 * 2 * 4,               // nAvgBytesPerSec = 48000 * channels * bytes_per_sample
-                2 * 4,                       // nBlockAlign = channels * bytes_per_sample
-                32,                          // wBitsPerSample
+                48000 * 2 * 2,               // nAvgBytesPerSec = 48000 * channels * bytes_per_sample
+                2 * 2,                       // nBlockAlign = channels * bytes_per_sample
+                16,                          // wBitsPerSample
                 sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX)
             },
-            32,                              // Samples (wValidBitsPerSample)
+            16,                              // Samples (wValidBitsPerSample)
             KSAUDIO_SPEAKER_STEREO,          // dwChannelMask
             STATICGUIDOF(KSDATAFORMAT_SUBTYPE_PCM)
         }

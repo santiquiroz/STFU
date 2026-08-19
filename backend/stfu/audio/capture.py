@@ -67,6 +67,8 @@ class CaptureThread:
         self._input_overflows: int = 0
         self._output_underflows: int = 0
         self._queue_drops: int = 0
+        self._worker_failed: bool = False
+        self._chunks_since_update: int = 0
 
     def start(self) -> None:
         self._pipeline.compile(self._fmt)
@@ -76,11 +78,26 @@ class CaptureThread:
         self._servo = DriftServo(target_fill=_TARGET_FILL_CHUNKS * chunk)
         self._resampler = samplerate.Resampler("sinc_fastest", channels=self._out_channels)
         self._stop_event.clear()
+        self._worker_failed = False
+        self._chunks_since_update = 0
         self._worker = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker.start()
 
+        # Si la apertura de cualquier stream falla de forma dura, se limpia todo
+        # (streams + worker) antes de propagar: nunca dejar el worker huérfano.
         try:
-            self._output_stream = sd.OutputStream(
+            self._open_output(chunk)
+            self._open_input(chunk)
+        except Exception:
+            self.stop()
+            raise
+
+    def _open_output(self, chunk: int) -> None:
+        # Playback es opcional: un fallo de dispositivo (PortAudioError) degrada a
+        # 'sin playback'. Cualquier otro error se propaga tras cerrar el stream.
+        stream = None
+        try:
+            stream = sd.OutputStream(
                 device=self._out,
                 samplerate=self._fmt.sample_rate,
                 channels=self._out_channels,
@@ -90,13 +107,21 @@ class CaptureThread:
                 extra_settings=_wasapi_auto_convert(),
                 callback=self._output_callback,
             )
-            self._output_stream.start()
+            stream.start()
         except sd.PortAudioError:
             _log.warning("output stream failed to open (device %s); playback disabled", self._out, exc_info=True)
+            _close_stream(stream)
             self._output_stream = None
+            return
+        except Exception:
+            _close_stream(stream)
+            raise
+        self._output_stream = stream
 
+    def _open_input(self, chunk: int) -> None:
+        stream = None
         try:
-            self._input_stream = sd.InputStream(
+            stream = sd.InputStream(
                 device=self._in,
                 samplerate=self._fmt.sample_rate,
                 channels=self._fmt.channels,
@@ -106,20 +131,19 @@ class CaptureThread:
                 extra_settings=_wasapi_auto_convert(),
                 callback=self._input_callback,
             )
-            self._input_stream.start()
+            stream.start()
         except Exception:
-            self.stop()
+            _close_stream(stream)
             raise
+        self._input_stream = stream
 
     def stop(self) -> None:
-        if self._input_stream:
-            self._input_stream.stop()
-            self._input_stream.close()
-            self._input_stream = None
-        if self._output_stream:
-            self._output_stream.stop()
-            self._output_stream.close()
-            self._output_stream = None
+        # Best-effort: el fallo al cerrar un stream no debe saltar la limpieza del
+        # resto ni impedir que el worker termine.
+        _close_stream(self._input_stream)
+        self._input_stream = None
+        _close_stream(self._output_stream)
+        self._output_stream = None
         self._stop_event.set()
         if self._worker:
             self._worker.join(timeout=2.0)
@@ -142,24 +166,34 @@ class CaptureThread:
                 _log.exception("swap de plugin %d falló", index)
 
     def _worker_loop(self) -> None:
-        chunks_since_update = 0
         while not self._stop_event.is_set():
             self._drain_swaps()
             try:
                 chunk = self._in_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            processed = self._process_or_passthrough(chunk)
-            if self._output_stream is None:
-                continue
-            out = _adjust_channels(processed, self._out_channels)
-            resampled = self._resampler.process(out, self._servo.ratio).astype(np.float32, copy=False)
-            self._ring.write(resampled.reshape(-1, self._out_channels))
-            self._servo.observe(self._ring.fill)
-            chunks_since_update += 1
-            if chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
-                self._servo.update()
-                chunks_since_update = 0
+            try:
+                self._process_and_output(chunk)
+            except Exception:
+                # Un fallo de INFRAESTRUCTURA (resample/ring/servo) detiene el
+                # worker con flag visible. Un fallo de PLUGIN no llega acá:
+                # _process_or_passthrough lo degrada a passthrough sin cortar audio.
+                self._worker_failed = True
+                _log.exception("worker del pipeline falló; procesamiento detenido")
+                return
+
+    def _process_and_output(self, chunk: np.ndarray) -> None:
+        processed = self._process_or_passthrough(chunk)
+        if self._output_stream is None:
+            return
+        out = _adjust_channels(processed, self._out_channels)
+        resampled = self._resampler.process(out, self._servo.ratio).astype(np.float32, copy=False)
+        self._ring.write(resampled.reshape(-1, self._out_channels))
+        self._servo.observe(self._ring.fill)
+        self._chunks_since_update += 1
+        if self._chunks_since_update >= _SERVO_UPDATE_EVERY_CHUNKS:
+            self._servo.update()
+            self._chunks_since_update = 0
 
     def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
         """Una excepción de plugin no mata el worker: marca el estado y el
@@ -206,9 +240,14 @@ class CaptureThread:
         return self._output_stream is not None
 
     @property
+    def worker_failed(self) -> bool:
+        return self._worker_failed
+
+    @property
     def stats(self) -> dict:
         return {
             "playback_active": self.playback_active,
+            "worker_failed": self._worker_failed,
             "input_overflows": self._input_overflows,
             "output_underflows": self._output_underflows + (self._ring.underflows if self._ring else 0),
             "queue_drops": self._queue_drops + (self._ring.overflows if self._ring else 0),
@@ -218,6 +257,16 @@ class CaptureThread:
             "stages": self._pipeline.stage_metrics(),
             "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
         }
+
+
+def _close_stream(stream) -> None:
+    if stream is None:
+        return
+    try:
+        stream.stop()
+        stream.close()
+    except Exception:
+        _log.warning("error cerrando stream de audio", exc_info=True)
 
 
 def _adjust_channels(audio: np.ndarray, out_ch: int) -> np.ndarray:

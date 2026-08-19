@@ -29,23 +29,26 @@ class AudioEngine:
         output_device_id: int,
         plugin_configs: list[dict],
     ) -> float:
-        # Toda la secuencia stop→build→start→register bajo el lock: dos POST
-        # concurrentes al mismo target no pueden filtrar un thread huérfano.
+        # La apertura de dispositivo (thread.start()) es I/O bloqueante y queda
+        # FUERA del lock para no congelar stats/stop/active_targets. El lock solo
+        # cubre el swap del registro. Invariante anti-huérfano: se registra el
+        # nuevo y se para el viejo; dos starts concurrentes dejan exactamente uno
+        # registrado y paran el resto (el thread nuevo se limpia solo si falla).
+        pipeline = build_pipeline(plugin_configs)
+        out_ch = _out_channels_for_device(output_device_id)
+        thread = CaptureThread(
+            input_device_id=input_device_id,
+            output_device_id=output_device_id,
+            fmt=_CAPTURE_FORMAT,
+            pipeline=pipeline,
+            out_channels=out_ch,
+        )
+        thread.start()
         with self._lock:
-            old = self._threads.pop(target, None)
-            if old:
-                old.stop()
-            pipeline = build_pipeline(plugin_configs)
-            out_ch = _out_channels_for_device(output_device_id)
-            thread = CaptureThread(
-                input_device_id=input_device_id,
-                output_device_id=output_device_id,
-                fmt=_CAPTURE_FORMAT,
-                pipeline=pipeline,
-                out_channels=out_ch,
-            )
-            thread.start()
+            old = self._threads.get(target)
             self._threads[target] = thread
+        if old:
+            old.stop()
         return pipeline.total_latency_ms()
 
     def stop(self, target: str) -> None:

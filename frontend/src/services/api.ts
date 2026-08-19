@@ -100,9 +100,11 @@ export const api = {
     value: number,
   ): Promise<{ ok: boolean }> =>
     client
-      .post(
-        `/feeder/parameter?plugin_index=${pluginIndex}&parameter_id=${parameterId}&value=${value}`,
-      )
+      .post("/feeder/parameter", {
+        plugin_index: pluginIndex,
+        parameter_id: parameterId,
+        value,
+      })
       .then((r) => r.data),
 
   setParameter: (

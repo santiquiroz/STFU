@@ -2,8 +2,8 @@
 
 #define RING_BUFFER_TAG	'uBiR'
 
-RingBuffer::RingBuffer() 
-	: m_Buffer(NULL), m_BufferLength(0), 
+RingBuffer::RingBuffer() noexcept
+	: m_Buffer(NULL), m_BufferLength(0),
 	m_LinearBufferReadPosition(0), m_LinearBufferWritePosition(0), m_IsFilling(TRUE), m_AlignBuffer(NULL), m_nByteAlignBufferCount(0)
 {
 }
@@ -49,13 +49,13 @@ NTSTATUS RingBuffer::Init(SIZE_T bufferSize, SIZE_T nByteAlign)
 	}
 
 	KeAcquireSpinLock(m_BufferLock, &m_SpinLockIrql);
-	m_Buffer = static_cast<BYTE*>(ExAllocatePoolWithTag(NonPagedPoolNx, bufferSize, RING_BUFFER_TAG));
-	if (m_Buffer == NULL) 
+	m_Buffer = static_cast<BYTE*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, bufferSize, RING_BUFFER_TAG));
+	if (m_Buffer == NULL)
 	{
 		KeReleaseSpinLock(m_BufferLock, m_SpinLockIrql);
 		return STATUS_INSUFFICIENT_RESOURCES;
 	}
-	m_AlignBuffer = static_cast<BYTE*>(ExAllocatePoolWithTag(NonPagedPoolNx, nByteAlign, RING_BUFFER_TAG));
+	m_AlignBuffer = static_cast<BYTE*>(ExAllocatePool2(POOL_FLAG_NON_PAGED, nByteAlign, RING_BUFFER_TAG));
 	if (m_AlignBuffer == NULL)
 	{
 		ExFreePoolWithTag(m_Buffer, RING_BUFFER_TAG);
@@ -106,12 +106,16 @@ NTSTATUS RingBuffer::PutInternal(BYTE* pBytes, SIZE_T count)
 	return status;
 }
 
-NTSTATUS RingBuffer::Put(BYTE* pBytes, SIZE_T count) 
+NTSTATUS RingBuffer::Put(BYTE* pBytes, SIZE_T count)
 {
 	if (count > m_BufferLength) return STATUS_BUFFER_TOO_SMALL;
 	if (count == 0) return STATUS_SUCCESS;
 
 	NTSTATUS status = STATUS_SUCCESS;
+	// Loopback: el productor (speaker DPC) y el consumidor (mic DPC) corren en
+	// DPCs concurrentes, asi que Put debe tomar el mismo spinlock que Take.
+	KeAcquireSpinLock(m_BufferLock, &m_SpinLockIrql);
+
 	//buffer overrun
 	if ((m_LinearBufferWritePosition + count) - m_LinearBufferReadPosition > m_BufferLength)
 	{
@@ -133,9 +137,10 @@ NTSTATUS RingBuffer::Put(BYTE* pBytes, SIZE_T count)
 
 	if (m_IsFilling && (m_LinearBufferWritePosition - m_LinearBufferReadPosition) > (m_BufferLength / 2))
 	{
-		DPF(D_TERSE, ("RingBuffer filled with %u bytes.", (m_LinearBufferWritePosition - m_LinearBufferReadPosition)));
 		m_IsFilling = false;
 	}
+
+	KeReleaseSpinLock(m_BufferLock, m_SpinLockIrql);
 	return status;
 }
 
@@ -165,9 +170,7 @@ NTSTATUS RingBuffer::Take(BYTE* pTarget, SIZE_T count, SIZE_T* readCount)
 	m_LinearBufferReadPosition += bytesRead;
 	if (m_LinearBufferWritePosition - m_LinearBufferReadPosition == 0)
 	{
-		DPF(D_TERSE, ("RingBuffer empty with %u bytes.", (m_LinearBufferWritePosition - m_LinearBufferReadPosition)));
 		m_IsFilling = true;
-		//m_nByteAlignBufferCount = 0;
 	}
 
 	KeReleaseSpinLock(m_BufferLock, m_SpinLockIrql);

@@ -1,5 +1,5 @@
 #pragma once
-#include "Globals.h"
+#include "definitions.h"
 
 class RingBuffer
 {
@@ -18,7 +18,7 @@ private:
 
 	NTSTATUS PutInternal(BYTE * pBytes, SIZE_T count);
 public:
-	RingBuffer();
+	RingBuffer() noexcept;
 	~RingBuffer();
 
 	NTSTATUS Init(SIZE_T bufferSize, SIZE_T nByteAlign);

@@ -71,11 +71,18 @@ def list_devices() -> list[DeviceInfo]:
     return result
 
 
+def _first_or_raise(devices: list[DeviceInfo], has_channels, kind: str) -> DeviceInfo:
+    device = next((d for d in devices if has_channels(d)), None)
+    if device is None:
+        raise RuntimeError(f"No hay dispositivo de audio de {kind} disponible")
+    return device
+
+
 def get_default_input() -> DeviceInfo:
     devices = list_devices()
     return (
         next((d for d in devices if d.is_default_input), None)
-        or next(d for d in devices if d.channels_in > 0)
+        or _first_or_raise(devices, lambda d: d.channels_in > 0, "entrada")
     )
 
 
@@ -83,11 +90,13 @@ def get_default_output() -> DeviceInfo:
     devices = list_devices()
     return (
         next((d for d in devices if d.is_default_output), None)
-        or next(d for d in devices if d.channels_out > 0)
+        or _first_or_raise(devices, lambda d: d.channels_out > 0, "salida")
     )
 
 
 def find_output_by_name(substring: str) -> DeviceInfo | None:
+    # Match por substring: el nombre WASAPI del endpoint puede llevar sufijos de
+    # formato/instancia, así que el nombre exacto no es fiable.
     sub = substring.lower()
     return next(
         (d for d in list_devices() if d.channels_out > 0 and sub in d.name.lower()),
@@ -96,5 +105,4 @@ def find_output_by_name(substring: str) -> DeviceInfo | None:
 
 
 def find_bridge_output() -> DeviceInfo | None:
-    """El render endpoint del driver virtual STFU, si está instalado."""
     return find_output_by_name(BRIDGE_RENDER_NAME)
