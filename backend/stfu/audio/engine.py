@@ -96,5 +96,26 @@ class AudioEngine:
         thread.pipeline.set_parameter(plugin_index, param_id, value)
         return True
 
+    def swap_model(self, target: str, model_id: str, device: str = "auto") -> bool:
+        """Activa un modelo NC en el pipeline vivo. El plugin se construye y
+        warmupea (sesión ONNX creada) en este hilo; el worker hace el swap
+        entre chunks — sin cortar el stream."""
+        from stfu.core.pipeline_factory import build_pipeline
+        from stfu.plugins.onnx_streaming import OnnxStreamingPlugin
+        with self._lock:
+            thread = self._threads.get(target)
+        if thread is None:
+            return False
+        index = next(
+            (i for i, p in enumerate(thread.pipeline._plugins)
+             if isinstance(p, OnnxStreamingPlugin)),
+            0,
+        )
+        staged = build_pipeline([{"plugin_id": f"model:{model_id}"}], device=device)
+        plugin = staged._plugins[0]
+        plugin.setup(plugin.preferred_format)  # warmup: crea la sesión acá, no en el worker
+        thread.request_plugin_swap(index, plugin)
+        return True
+
 
 engine = AudioEngine()

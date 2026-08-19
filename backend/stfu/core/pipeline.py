@@ -32,6 +32,17 @@ class Pipeline:
             raise IndexError(f"plugin_index {plugin_index} fuera de rango")
         self._plugins[plugin_index].set_parameter(param_id, value)
 
+    def replace_plugin(self, index: int, plugin: AudioPlugin) -> None:
+        """Swap en caliente: teardown del viejo, recompilación de stages.
+        Debe llamarse desde el hilo que ejecuta process() (el worker)."""
+        if not 0 <= index < len(self._plugins):
+            raise IndexError(f"plugin index {index} fuera de rango")
+        old = self._plugins[index]
+        self._plugins[index] = plugin
+        old.teardown()
+        if self._input_format is not None:
+            self.compile(self._input_format)
+
     def clear(self) -> None:
         for p in self._plugins:
             p.teardown()

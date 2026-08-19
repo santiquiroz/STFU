@@ -53,6 +53,7 @@ class CaptureThread:
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
         self._in_queue: queue.Queue = queue.Queue(maxsize=_INPUT_QUEUE_CHUNKS)
+        self._swap_queue: queue.Queue = queue.Queue()
         self._ring: RingBuffer | None = None
         self._servo: DriftServo | None = None
         self._resampler: samplerate.Resampler | None = None
@@ -125,9 +126,25 @@ class CaptureThread:
             self._worker = None
         self._pipeline.clear()
 
+    def request_plugin_swap(self, index: int, plugin) -> None:
+        self._swap_queue.put((index, plugin))
+
+    def _drain_swaps(self) -> None:
+        while True:
+            try:
+                index, plugin = self._swap_queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                self._pipeline.replace_plugin(index, plugin)
+                self._pipeline_failed = False  # un modelo nuevo resetea el estado failed
+            except Exception:
+                _log.exception("swap de plugin %d falló", index)
+
     def _worker_loop(self) -> None:
         chunks_since_update = 0
         while not self._stop_event.is_set():
+            self._drain_swaps()
             try:
                 chunk = self._in_queue.get(timeout=0.1)
             except queue.Empty:

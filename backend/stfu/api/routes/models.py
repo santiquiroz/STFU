@@ -49,3 +49,13 @@ def delete_model(model_id: str):
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return {"deleted": True}
+
+
+@router.post("/models/{model_id}/activate")
+def activate_model(model_id: str, target: str = "mic", device: str = "auto"):
+    from stfu.audio.engine import engine
+    if not any(m["id"] == model_id and m["installed"] for m in _hub().catalog()):
+        raise HTTPException(status_code=404, detail=f"modelo {model_id!r} no instalado")
+    if not engine.swap_model(target, model_id, device):
+        raise HTTPException(status_code=409, detail=f"target {target!r} no está activo")
+    return {"activated": model_id, "target": target}
