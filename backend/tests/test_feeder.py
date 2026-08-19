@@ -85,6 +85,20 @@ def test_parameter_inactive_returns_404():
     assert r.status_code == 404
 
 
+def test_bypass_active_returns_200():
+    with patch("stfu.api.routes.feeder.engine.set_bypass", return_value=True) as sb:
+        r = client.post("/feeder/bypass", json={"on": True})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert sb.call_args.args == ("feeder", True)
+
+
+def test_bypass_inactive_returns_404():
+    with patch("stfu.api.routes.feeder.engine.set_bypass", return_value=False):
+        r = client.post("/feeder/bypass", json={"on": True})
+    assert r.status_code == 404
+
+
 def test_parameter_out_of_range_returns_400():
     with patch("stfu.api.routes.feeder.engine.set_parameter", side_effect=IndexError("índice fuera de rango")):
         r = client.post("/feeder/parameter",

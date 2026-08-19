@@ -55,3 +55,13 @@ def test_set_parameter_invalid_target_returns_400():
         json={"plugin_index": 0, "parameter_id": "strength", "value": 0.5},
     )
     assert r.status_code == 400
+
+
+def test_set_bypass_on_inactive_pipeline_returns_404():
+    r = client.post("/pipeline/mic/bypass", json={"on": True})
+    assert r.status_code == 404
+
+
+def test_set_bypass_invalid_target_returns_400():
+    r = client.post("/pipeline/foo/bypass", json={"on": True})
+    assert r.status_code == 400
