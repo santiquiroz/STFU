@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from stfu.apo.apo_engine import apo_engine
 from stfu.apo.constants import CLSID_BY_FLOW
 from stfu.apo.endpoint_finder import find_endpoint_guid
+from stfu.apo.health import check_registrations, needs_repair as health_needs_repair
 from stfu.apo.register import (
     enable_unsigned_apos,
     get_apo_status,
@@ -43,6 +44,22 @@ def _resolve_guid(device_name: str, flow: str) -> str:
 def apo_status(flow: Literal["Capture", "Render"], device_name: str):
     guid = _resolve_guid(device_name, flow)
     return get_apo_status(guid, flow)
+
+
+@router.get("/health")
+def apo_health():
+    return {"needs_repair": health_needs_repair(), "endpoints": check_registrations()}
+
+
+@router.post("/repair")
+def apo_repair():
+    try:
+        from stfu.apo.elevate import run_elevated
+        run_elevated(["repair"])
+    except Exception as e:
+        _log.exception("fallo en repair APO elevado")
+        raise HTTPException(500, str(e))
+    return {"ok": True}
 
 
 @router.post("/register")

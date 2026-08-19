@@ -37,6 +37,7 @@ def test_stats_initial_state():
         "pipeline_failed": False,
         "stages": [],
         "total_latency_ms": 0.0,
+        "inference": None,
     }
 
 

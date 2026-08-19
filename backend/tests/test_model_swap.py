@@ -42,7 +42,7 @@ def _fmt():
     return AudioFormat(sample_rate=48000, channels=2, chunk_samples=960)
 
 
-def test_replace_plugin_tears_down_old_and_recompiles():
+def test_replace_plugin_tears_down_old_and_swaps_in_place():
     old, new = _TaggedPlugin("old"), _TaggedPlugin("new")
     p = Pipeline()
     p.add_plugin(old)

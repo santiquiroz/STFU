@@ -17,11 +17,16 @@ from stfu.audio.engine import engine
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from stfu.audio.degrade_monitor import DegradeMonitor
+    from stfu.apo.health_monitor import ApoHealthMonitor
+    from stfu.apo.health import check_registrations
     from stfu.api.routes.models import _hub
     monitor = DegradeMonitor(engine, lambda: _hub().catalog())
     monitor.start()
+    apo_health_monitor = ApoHealthMonitor(check_registrations)
+    apo_health_monitor.start()
     yield
     monitor.stop()
+    apo_health_monitor.stop()
     engine.stop_all()
     from stfu.apo.apo_engine import apo_engine
     apo_engine.stop_all()
@@ -50,13 +55,19 @@ app.include_router(feeder_router)
 
 def _status_payload() -> dict:
     from stfu.apo.apo_engine import apo_engine
-    return {
+    payload = {
         "status": "ok",
         "latency_ms": engine.get_latency_ms(),
         "active": engine.active_targets(),
         "streams": engine.get_stats(),
         "apo": apo_engine.status(),
     }
+    try:
+        from stfu.apo.health import needs_repair, check_registrations
+        payload["apo_health"] = {"needs_repair": needs_repair(), "endpoints": check_registrations()}
+    except Exception:
+        payload["apo_health"] = {"needs_repair": False, "endpoints": []}
+    return payload
 
 
 @app.get("/status")

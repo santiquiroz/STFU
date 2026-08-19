@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     unreg.add_argument("endpoint_guid")
     unreg.add_argument("flow", choices=["Capture", "Render"])
 
+    sub.add_parser("repair")
+
     args = parser.parse_args(argv)
     from stfu.apo import register as reg_mod
 
@@ -33,6 +35,9 @@ def main(argv: list[str] | None = None) -> int:
             reg_mod.register_apo(args.endpoint_guid, args.flow, args.apo_clsid)
         elif args.op == "unregister":
             reg_mod.unregister_apo(args.endpoint_guid, args.flow)
+        elif args.op == "repair":
+            for entry in reg_mod.repair_registrations():
+                print(f"{entry['endpoint_guid']} {entry['flow']}: {entry['result']}")
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -27,6 +27,7 @@ class OnnxStreamingPlugin(AudioPlugin):
         self._strength: float = 1.0
         self._active_device: str | None = None
         self._nan_warned: bool = False
+        self._degraded: bool = False
 
     @property
     def name(self) -> str:
@@ -44,10 +45,15 @@ class OnnxStreamingPlugin(AudioPlugin):
     def active_device(self) -> str | None:
         return self._active_device
 
+    @property
+    def runtime_status(self) -> dict:
+        return {"device": self._active_device, "degraded": self._degraded}
+
     def setup(self, fmt: AudioFormat) -> AudioFormat:
         if self._session is None:
             self._active_device = ep_router.select_device(self._device, self._probe)
         self._reset_states()
+        self._degraded = False
         return fmt
 
     def _probe(self, providers: list[str]) -> bool:
@@ -71,13 +77,42 @@ class OnnxStreamingPlugin(AudioPlugin):
         if self._session is None:
             return audio
         dry = audio
-        wet = self._run(audio)
-        s = self._strength
-        out = (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
-        if not np.isfinite(out).all():
+        try:
+            wet = self._run(audio)
+        except Exception:
+            _log.exception("run de la sesión falló en device %s; intentando fallback", self._active_device)
+            if not self._fallback_to_next_device():
+                self._enter_degraded_passthrough()
+                return dry
+            try:
+                wet = self._run(audio)
+            except Exception:
+                _log.exception("run falló también tras fallback; passthrough")
+                self._enter_degraded_passthrough()
+                return dry
+        if not np.isfinite(wet).all():
             self._warn_nan_once()
             return dry
-        return out
+        s = self._strength
+        return (wet * s + dry * (1.0 - s)).astype(np.float32, copy=False)
+
+    def _enter_degraded_passthrough(self) -> None:
+        # _active_device se deja como quedó (última EP viva): no es la señal de
+        # actividad una vez acá — runtime_status.degraded es la autoritativa.
+        self._session = None
+        self._degraded = True
+
+    def _fallback_to_next_device(self) -> bool:
+        for candidate in ep_router.remaining_ladder(self._active_device or self._device):
+            try:
+                providers = ep_router.providers_for(candidate)
+            except ep_router.DeviceUnavailable:
+                continue
+            if self._probe(providers):
+                self._active_device = candidate
+                _log.warning("EP fallback: sesión recreada en device %s", candidate)
+                return True
+        return False
 
     def _warn_nan_once(self) -> None:
         if not self._nan_warned:

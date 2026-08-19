@@ -49,6 +49,10 @@ class FormatAdapter:
             self._buffer = self._buffer[target:]
 
     @property
+    def output_format(self) -> AudioFormat:
+        return self._dst
+
+    @property
     def buffering_latency_ms(self) -> float:
         src_ms = self._src.chunk_samples / self._src.sample_rate * 1000.0
         dst_ms = self._dst.chunk_samples / self._dst.sample_rate * 1000.0

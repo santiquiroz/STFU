@@ -48,6 +48,15 @@ def providers_for(device: str) -> list[str]:
     return [ep, "CPUExecutionProvider"]
 
 
+def remaining_ladder(device: str) -> list[str]:
+    """Devices por debajo del actual en la escalera fija npu→gpu→cpu, para
+    fallback en runtime cuando el EP activo falla."""
+    order = ["npu", "gpu", "cpu"]
+    if device not in order:
+        return []
+    return order[order.index(device) + 1:]
+
+
 def select_device(device: str, probe: Callable[[list[str]], bool]) -> str:
     if device not in DEVICE_LADDER:
         raise ValueError(f"device desconocido: {device!r}")
