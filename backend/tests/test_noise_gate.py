@@ -44,6 +44,26 @@ def test_quiet_signal_gets_attenuated():
     assert tail < 0.1 * quiet_rms  # fuertemente atenuado
 
 
+def test_gate_closes_after_hold_on_loud_to_quiet_transition():
+    gate = _gate(threshold_db=-45.0, hold_ms=20.0, release_ms=100.0)
+    loud = _tone(0.5, n=960 * 5)
+    for i in range(0, len(loud), 960):
+        gate.process(loud[i:i + 960])
+    assert gate._gain > 0.9  # gate abierto tras varios chunks fuertes
+
+    quiet = _tone(0.001, n=960 * 20)
+    gains = []
+    for i in range(0, len(quiet), 960):
+        gate.process(quiet[i:i + 960])
+        gains.append(gate._gain)
+
+    # la ganancia no debe subir en ningún chunk silencioso (hold plano, luego decae)
+    for prev, curr in zip(gains, gains[1:]):
+        assert curr <= prev + 1e-9
+
+    assert gains[-1] < 0.1  # tras hold + varias constantes de release, cerrado
+
+
 def test_gate_state_persists_across_chunks():
     gate = _gate(threshold_db=-45.0)
     loud = _tone(0.5, n=2000)
