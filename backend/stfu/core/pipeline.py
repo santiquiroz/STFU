@@ -33,15 +33,52 @@ class Pipeline:
         self._plugins[plugin_index].set_parameter(param_id, value)
 
     def replace_plugin(self, index: int, plugin: AudioPlugin) -> None:
-        """Swap en caliente: teardown del viejo, recompilación de stages.
-        Debe llamarse desde el hilo que ejecuta process() (el worker)."""
+        """Swap en caliente desde el hilo del worker. Si el plugin nuevo produce
+        el mismo formato de setup que el viejo, hace un swap quirúrgico del
+        stage sin re-setupear los demás plugins (preserva el buffer soxr de
+        los adapters vecinos). Si el formato difiere, recompila todo."""
         if not 0 <= index < len(self._plugins):
             raise IndexError(f"plugin index {index} fuera de rango")
         old = self._plugins[index]
-        self._plugins[index] = plugin
+        if self._input_format is None or not self._can_swap_in_place(index, plugin):
+            self._plugins[index] = plugin
+            old.teardown()
+            if self._input_format is not None:
+                self.compile(self._input_format)
+            return
+        self._swap_stage_in_place(index, old, plugin)
+
+    def _can_swap_in_place(self, index: int, plugin: AudioPlugin) -> bool:
+        """True si el plugin nuevo puede reemplazar in-place al del stage
+        `index`. compile() siempre llama a setup() de un plugin con su propio
+        preferred_format (el adapter previo, si existe, convierte hacia ese
+        formato antes de entregarle audio) — por eso un plugin con el mismo
+        preferred_format que el viejo recibe exactamente la misma entrada, y
+        los adapters vecinos (construidos contra ese preferred_format) siguen
+        siendo válidos sin tocarlos. Ante cualquier duda, False → recompile."""
+        if index >= len(self._stages):
+            return False
+        old = self._plugins[index]
+        return plugin.preferred_format == old.preferred_format
+
+    def _swap_stage_in_place(self, index: int, old: AudioPlugin, plugin: AudioPlugin) -> None:
+        """Reemplaza solo el stage `index`: tira abajo el viejo, setupea el
+        nuevo con el formato que ya recibía el viejo y reasigna
+        _stages/_stage_metrics en bloque (mismo patrón atómico que compile(),
+        ver Task 1) para que un lector concurrente nunca vea listas a medio
+        construir."""
+        adapter, _ = self._stages[index]
+        setup_in = adapter.output_format if adapter is not None else plugin.preferred_format
         old.teardown()
-        if self._input_format is not None:
-            self.compile(self._input_format)
+        plugin.setup(setup_in)
+        self._plugins[index] = plugin
+        budget_ms = self._input_format.chunk_samples / self._input_format.sample_rate * 1000.0
+        new_stages = list(self._stages)
+        new_stages[index] = (adapter, plugin)
+        new_metrics = list(self._stage_metrics)
+        new_metrics[index] = StageMetrics(plugin.name, budget_ms=budget_ms)
+        self._stages = new_stages
+        self._stage_metrics = new_metrics
 
     def clear(self) -> None:
         for p in self._plugins:
