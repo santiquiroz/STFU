@@ -50,13 +50,19 @@ app.include_router(feeder_router)
 
 def _status_payload() -> dict:
     from stfu.apo.apo_engine import apo_engine
-    return {
+    payload = {
         "status": "ok",
         "latency_ms": engine.get_latency_ms(),
         "active": engine.active_targets(),
         "streams": engine.get_stats(),
         "apo": apo_engine.status(),
     }
+    try:
+        from stfu.apo.health import needs_repair, check_registrations
+        payload["apo_health"] = {"needs_repair": needs_repair(), "endpoints": check_registrations()}
+    except Exception:
+        payload["apo_health"] = {"needs_repair": False, "endpoints": []}
+    return payload
 
 
 @app.get("/status")
