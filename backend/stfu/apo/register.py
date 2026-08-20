@@ -108,11 +108,15 @@ def _read_effect_list(path: str, prop: str) -> list[str]:
     return []
 
 
-def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
+def register_apo(endpoint_guid: str, flow: str, apo_clsid: str, restart_service: bool = True) -> None:
     """Añade stfu_apo.dll a la cadena de efectos del endpoint. Requiere admin.
 
     Windows 10/11 lee PKEY_CompositeFX como REG_MULTI_SZ (lista de CLSIDs). Se
     ANTEPONE el nuestro preservando los del fabricante, con backup para restaurar.
+
+    `restart_service=False` difiere el reinicio de audiosrv — lo usa
+    repair_registrations() para batchear un solo reinicio por reparación en
+    vez de uno por endpoint.
     """
     dll = _stage_apo_dll()
     _run_quiet(["regsvr32", "/s", str(dll)], check=True, timeout=30)
@@ -134,7 +138,8 @@ def register_apo(endpoint_guid: str, flow: str, apo_clsid: str) -> None:
         winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY,
     ) as k:
         winreg.SetValueEx(k, prop, 0, winreg.REG_MULTI_SZ, new_list)
-    _restart_audio_service()
+    if restart_service:
+        _restart_audio_service()
 
 
 def unregister_apo(endpoint_guid: str, flow: str) -> None:
@@ -199,20 +204,28 @@ def enable_unsigned_apos() -> None:
     _log.warning("DisableProtectedAudioDG=1 — APOs sin firma habilitados")
 
 
-def check_registrations() -> list[dict]:
-    """Delega en health.check_registrations con import diferido: health.py
-    importa de este módulo a nivel de módulo, así que el import inverso debe
-    ocurrir recién en tiempo de llamada para no ciclar."""
-    from stfu.apo.health import check_registrations as _check_registrations
-    return _check_registrations()
+def _check_registrations_for_repair() -> list[dict]:
+    """Shim de import diferido hacia health.check_registrations (nombre
+    distinto adrede: health.py importa de este módulo a nivel de módulo, así
+    que el import inverso debe ocurrir recién en tiempo de llamada para no
+    ciclar — y para no colisionar con el `check_registrations` público de
+    health.py, que es la implementación real)."""
+    from stfu.apo.health import check_registrations
+    return check_registrations()
 
 
 def repair_registrations() -> list[dict]:
     """Re-registra los endpoints cuyo APO fue desactivado por un update.
-    Preserva los efectos del fabricante vía el backup existente. Requiere admin."""
+    Preserva los efectos del fabricante vía el backup existente. Requiere admin.
+
+    Reinicia audiosrv UNA sola vez para todo el batch (no por endpoint) — con
+    varios endpoints desactivados, reiniciar el servicio de audio por cada uno
+    corta el audio del sistema repetidas veces sin necesidad.
+    """
     from stfu.apo.constants import CLSID_BY_FLOW
     report = []
-    for check in check_registrations():
+    repaired_any = False
+    for check in _check_registrations_for_repair():
         guid, flow, state = check["endpoint_guid"], check["flow"], check["state"]
         if state == "ok":
             report.append({**check, "result": "ok"})
@@ -224,11 +237,14 @@ def repair_registrations() -> list[dict]:
             report.append({**check, "result": state})
             continue
         try:
-            register_apo(guid, flow, CLSID_BY_FLOW[flow])
+            register_apo(guid, flow, CLSID_BY_FLOW[flow], restart_service=False)
             report.append({**check, "result": "repaired"})
+            repaired_any = True
         except Exception as e:
             _log.exception("repair de %s/%s falló", guid, flow)
             report.append({**check, "result": "error", "detail": str(e)})
+    if repaired_any:
+        _restart_audio_service()
     return report
 
 

@@ -1,9 +1,11 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from stfu.core.logging import setup_logging
 
 setup_logging()
+_log = logging.getLogger(__name__)
 from stfu.api.routes.devices import router as devices_router
 from stfu.api.routes.pipeline import router as pipeline_router
 from stfu.api.routes.models import router as models_router
@@ -27,6 +29,10 @@ async def lifespan(app: FastAPI):
     monitor.start()
     default_device_watcher.start()
     apo_health_monitor.start()
+    try:
+        apo_health_monitor.check_now()
+    except Exception:
+        _log.exception("health-check del APO al arranque falló")
     yield
     monitor.stop()
     default_device_watcher.stop()

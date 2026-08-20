@@ -2,8 +2,14 @@
 
 Escalera de devices con probe: `auto` prueba NPU→GPU→CPU y se queda con el
 primero que funciona; un device elegido a mano NO hace fallback silencioso —
-el usuario lo eligió, un fallo debe ser visible. NPU se habilita en F2.5 vía
-runtime packs (spec §3.3); mientras tanto existe en el enum pero sin EP.
+el usuario lo eligió, un fallo debe ser visible. NPU está DIFERIDA
+INDEFINIDAMENTE — no es trabajo agendado. El blocker real es model-fit, no
+packaging: las NPUs actuales (QNN/OpenVINO/VitisAI) son mal fit para un
+denoiser recurrente streaming pequeño, y falta primero producir una variante
+de modelo NPU-friendly (frame size fijo, estado recurrente como tensores
+explícitos, cuantización int8/int16) — ver
+docs/superpowers/audits/2026-08-18-npu-decision.md. Mientras tanto el device
+existe en el enum sin EP.
 """
 import logging
 from typing import Callable
@@ -18,7 +24,7 @@ DEVICE_LADDER: dict[str, list[str]] = {
 }
 
 EP_BY_DEVICE: dict[str, str | None] = {
-    "npu": None,  # F2.5: runtime packs (QNN / OpenVINO)
+    "npu": None,  # diferido indefinidamente por model-fit — ver audit 2026-08-18
     "gpu": "DmlExecutionProvider",
     "cpu": "CPUExecutionProvider",
 }
@@ -42,7 +48,10 @@ def providers_for(device: str) -> list[str]:
     if ep == "missing":
         raise ValueError(f"device desconocido: {device!r}")
     if ep is None:
-        raise DeviceUnavailable(f"device {device!r} sin runtime instalado (llega en F2.5)")
+        raise DeviceUnavailable(
+            f"device {device!r} sin runtime instalado (diferido indefinidamente por "
+            "model-fit, no agendado — ver docs/superpowers/audits/2026-08-18-npu-decision.md)"
+        )
     if ep == "CPUExecutionProvider":
         return [ep]
     return [ep, "CPUExecutionProvider"]

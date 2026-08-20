@@ -2,9 +2,13 @@
 silencio tras un cumulative update, y reinstalar un driver de audio borra el
 endpoint. Este módulo compara los endpoints donde registramos (backups) contra
 su estado real — solo lee el registro, no requiere admin."""
+import logging
+
 from stfu.apo.constants import CLSID_BY_FLOW
 from stfu.apo.endpoint_finder import _device_state, _flow_key
 from stfu.apo.register import _load_backups, get_apo_status
+
+_log = logging.getLogger(__name__)
 
 
 def _parse_backup_key(key: str) -> tuple[str, str]:
@@ -31,5 +35,18 @@ def check_registrations() -> list[dict]:
     return result
 
 
+def failing_registrations() -> list[dict]:
+    """Endpoints cuyo estado no es 'ok' — el detalle que needs_repair() opaca
+    detrás de un bool."""
+    return [r for r in check_registrations() if r["state"] != "ok"]
+
+
 def needs_repair() -> bool:
-    return any(r["state"] != "ok" for r in check_registrations())
+    failing = failing_registrations()
+    if failing:
+        _log.warning(
+            "APO necesita reparación en %d endpoint(s): %s",
+            len(failing),
+            [(r["flow"], r["endpoint_guid"], r["state"]) for r in failing],
+        )
+    return bool(failing)

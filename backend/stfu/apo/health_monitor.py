@@ -52,6 +52,21 @@ class ApoHealthMonitor:
             self._snapshot = self._compute_snapshot() or _NEUTRAL_SNAPSHOT
         return self._snapshot
 
+    def check_now(self) -> ApoHealthSnapshot:
+        """Chequeo síncrono inmediato — se corre una vez al arranque del
+        backend para que un APO degradado sea visible desde el boot, en vez
+        de esperar el primer ciclo del loop (~60s) o la primera request a
+        /status. Nunca lanza: sin registro legible, cae al snapshot neutro."""
+        snapshot = self._compute_snapshot()
+        if snapshot is None:
+            _log.info("health-check del APO al arranque: no disponible aún")
+            return self._snapshot or _NEUTRAL_SNAPSHOT
+        self._snapshot = snapshot
+        self._handle_degradation(snapshot.endpoints)
+        if not snapshot.needs_repair:
+            _log.info("health-check del APO al arranque: %d endpoint(s) ok", len(snapshot.endpoints))
+        return snapshot
+
     def _loop(self) -> None:
         while not self._stop_event.wait(self._interval):
             self._tick()

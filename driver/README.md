@@ -1,5 +1,12 @@
 # STFU Microphone — driver de audio virtual (v2)
 
+**Estado: PAUSADO** — decisión explícita del usuario. El core kernel-mode
+compila, firma y pasa las 3 fases de desarrollo (ver abajo), pero el foco
+activo del proyecto es el **APO en modo usuario** (`apo/README.md`): no
+requiere driver kernel, no requiere Secure Boot OFF ni test-signing, y ya
+tiene auto-repair shipped. Este driver queda documentado tal como está, sin
+más trabajo de código mientras dure la pausa.
+
 Fork de [VirtualDrivers/Virtual-Audio-Driver](https://github.com/VirtualDrivers/Virtual-Audio-Driver) (MIT, linaje SYSVAD/PortCls-WaveRT) + el `RingBuffer` de [JannesP/AudioMirror](https://github.com/JannesP/AudioMirror) (MIT) para el loopback.
 
 **Qué expone:** dos endpoints —
@@ -10,11 +17,13 @@ Kernel = solo un cable: `Audio Bridge` (render) → RingBuffer → `STFU Microph
 
 ## Estado
 - [x] Base forkeada (VirtualDrivers) + RingBuffer portado (AudioMirror)
-- [ ] Cambios de código (ver `DRIVER-CHANGES.md`) — se hacen y compilan en la máquina de dev con Secure Boot OFF
-- [ ] Compilar con EWDK (`build.ps1`)
-- [ ] test-sign + instalar (`install-test.ps1`)
-- [ ] Renombrar endpoints
-- [ ] Loopback kernel (RingBuffer compartido)
+- [x] Cambios de código (ver `DRIVER-CHANGES.md`) — hechos y compilados en la máquina de dev con Secure Boot OFF
+- [x] Compilar con EWDK (`build.ps1`) — Fase 1, exit 0 (ver `PROGRESS.md`)
+- [x] Test-sign (`package.ps1`, cert propio CN=STFU Test Cert)
+- [x] Renombrar endpoints — Fase 2, `.inf` stampa "STFU Microphone" / "STFU Audio Bridge"
+- [x] Loopback kernel (RingBuffer compartido) — Fase 3, compila y firma
+- [ ] Instalar en una máquina real (requiere elevación interactiva del usuario, UAC)
+- [ ] Verificar el cable en runtime (`verify_cable.py`) — bloqueado por la instalación
 - [ ] Firma attestation (release)
 
 ## Requisitos de la máquina de dev
