@@ -30,6 +30,14 @@ export interface InferenceStatus {
   model_id?: string | null;
 }
 
+export interface AudioTelemetry {
+  pre_db: number;
+  post_db: number;
+  reduction_db: number;
+  spectrum_pre: number[];
+  spectrum_post: number[];
+}
+
 export interface StreamStats {
   playback_active: boolean;
   pipeline_failed: boolean;
@@ -43,6 +51,8 @@ export interface StreamStats {
     overbudget: number;
   }[];
   inference?: InferenceStatus | null;
+  audio?: AudioTelemetry;
+  bypass?: boolean;
 }
 
 export interface ApoHealthEndpoint {
@@ -68,6 +78,29 @@ export interface StatusResponse {
 export interface PluginConfig {
   plugin_id: string;
   parameters?: Record<string, number | string | boolean>;
+}
+
+export interface Parameter {
+  id: string;
+  label: string;
+  type: "float" | "int" | "bool" | "enum";
+  default: unknown;
+  min?: number;
+  max?: number;
+  options?: string[];
+}
+
+export interface PluginCatalogEntry {
+  plugin_id: string;
+  name: string;
+  version: string;
+  parameters: Parameter[];
+}
+
+export interface PresetInfo {
+  name: string;
+  plugins: PluginConfig[];
+  builtin: boolean;
 }
 
 export interface PipelineRequest {
@@ -126,15 +159,13 @@ export const api = {
 
   startFeeder: (
     inputDeviceId: number,
-    strength: number,
+    plugins: PluginConfig[],
     testOutputDeviceId?: number,
   ): Promise<{ ok: boolean; using_bridge: boolean; output_device_id: number }> =>
     client
       .post("/feeder/start", {
         input_device_id: inputDeviceId,
-        plugins: [
-          { plugin_id: "deepfilternet3", parameters: { strength } },
-        ],
+        plugins,
         test_output_device_id: testOutputDeviceId ?? null,
       })
       .then((r) => r.data),
@@ -242,4 +273,27 @@ export const api = {
 
   repairApo: (): Promise<{ ok: boolean }> =>
     client.post("/apo/repair").then((r) => r.data),
+
+  getPlugins: (): Promise<PluginCatalogEntry[]> =>
+    client.get("/plugins").then((r) => r.data),
+
+  listPresets: (): Promise<PresetInfo[]> =>
+    client.get("/presets").then((r) => r.data),
+
+  getPreset: (name: string): Promise<PresetInfo> =>
+    client.get(`/presets/${encodeURIComponent(name)}`).then((r) => r.data),
+
+  savePreset: (
+    name: string,
+    plugins: PluginConfig[],
+  ): Promise<{ name: string; plugins: PluginConfig[]; builtin: boolean }> =>
+    client
+      .post(`/presets/${encodeURIComponent(name)}`, { plugins })
+      .then((r) => r.data),
+
+  deletePreset: (name: string): Promise<{ deleted?: boolean } | unknown> =>
+    client.delete(`/presets/${encodeURIComponent(name)}`).then((r) => r.data),
+
+  feederBypass: (on: boolean): Promise<{ ok: boolean; bypass: boolean }> =>
+    client.post("/feeder/bypass", { on }).then((r) => r.data),
 };

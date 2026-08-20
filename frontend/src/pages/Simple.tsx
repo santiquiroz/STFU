@@ -89,7 +89,11 @@ export function Simple() {
     try {
       if (next) {
         // Con driver: sale al STFU Audio Bridge. Sin driver: modo prueba por parlantes.
-        await api.startFeeder(effectiveInput!, strength / 100, bridgePresent ? undefined : effectiveTestOut);
+        await api.startFeeder(
+          effectiveInput!,
+          [{ plugin_id: "deepfilternet3", parameters: { strength: strength / 100 } }],
+          bridgePresent ? undefined : effectiveTestOut,
+        );
         setMicOn(true);
       } else {
         await api.stopFeeder();
