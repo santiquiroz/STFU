@@ -291,7 +291,7 @@ export const api = {
       .post(`/presets/${encodeURIComponent(name)}`, { plugins })
       .then((r) => r.data),
 
-  deletePreset: (name: string): Promise<{ deleted?: boolean } | unknown> =>
+  deletePreset: (name: string): Promise<{ deleted: string }> =>
     client.delete(`/presets/${encodeURIComponent(name)}`).then((r) => r.data),
 
   feederBypass: (on: boolean): Promise<{ ok: boolean; bypass: boolean }> =>

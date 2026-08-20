@@ -1,4 +1,4 @@
-import { Parameter } from "../services/api";
+import type { Parameter } from "../services/api";
 import { Toggle } from "./ui";
 
 export function ParamControl({

@@ -11,6 +11,7 @@ interface ChainEditorProps {
   onApply: () => void;
   applying?: boolean;
   canApply?: boolean;
+  liveEditable?: boolean;
 }
 
 const selectClasses =
@@ -64,6 +65,7 @@ export function ChainEditor({
   onApply,
   applying = false,
   canApply = false,
+  liveEditable = false,
 }: ChainEditorProps) {
   const { data: catalog, isLoading, isError, error } = usePlugins();
   const [selectedToAdd, setSelectedToAdd] = useState("");
@@ -76,8 +78,7 @@ export function ChainEditor({
     );
     onChange(nextChain);
 
-    const streamIsActive = canApply;
-    if (streamIsActive && isNumericValue(value)) {
+    if (liveEditable && isNumericValue(value)) {
       api.setFeederParameter(index, paramId, value).catch(() => {});
     }
   }
@@ -162,13 +163,17 @@ export function ChainEditor({
         </div>
 
         <div className="flex flex-col gap-1 border-t border-zinc-700/60 pt-3">
-          <Button variant="primary" onClick={onApply} disabled={!canApply || applying}>
+          <Button
+            variant="primary"
+            onClick={onApply}
+            disabled={!canApply || applying || chain.length === 0}
+          >
             {applying ? <Spinner /> : "Aplicar cadena"}
           </Button>
           <p className="text-[11px] text-zinc-500">
             {!canApply
               ? "Activá el micrófono en Control para aplicar."
-              : "Agregar, quitar o reordenar plugins reinicia el stream. Los cambios de parámetros en plugins ya activos se aplican en vivo."}
+              : "Los parámetros numéricos se aplican en vivo mientras la cadena está activa; agregar, quitar o reordenar plugins requiere volver a aplicar."}
           </p>
         </div>
       </Card>

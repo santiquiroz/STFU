@@ -9,9 +9,15 @@ import { api } from "../services/api";
 import type { PluginConfig } from "../services/api";
 import { extractError } from "../components/ui";
 
+function chainsMatch(a: PluginConfig[], b: PluginConfig[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((config, i) => config.plugin_id === b[i].plugin_id);
+}
+
 export function Studio() {
   const queryClient = useQueryClient();
   const [chain, setChain] = useState<PluginConfig[]>([]);
+  const [appliedChain, setAppliedChain] = useState<PluginConfig[] | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
 
@@ -28,6 +34,8 @@ export function Studio() {
   const effectiveTestOut = outputs[0]?.id;
   const bridgePresent = feeder?.bridge_present ?? false;
   const canApply = effectiveInput !== undefined;
+  const liveEditable =
+    feeder?.active === true && appliedChain !== null && chainsMatch(chain, appliedChain);
 
   async function handleApply() {
     if (effectiveInput === undefined) return;
@@ -39,6 +47,7 @@ export function Studio() {
         chain,
         bridgePresent ? undefined : effectiveTestOut,
       );
+      setAppliedChain(chain);
       queryClient.invalidateQueries({ queryKey: ["feeder-status"] });
       queryClient.invalidateQueries({ queryKey: ["status"] });
     } catch (e) {
@@ -76,6 +85,7 @@ export function Studio() {
         onApply={handleApply}
         applying={applying}
         canApply={canApply}
+        liveEditable={liveEditable}
       />
     </div>
   );
