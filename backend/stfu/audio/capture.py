@@ -1,13 +1,14 @@
 import logging
 import queue
 import threading
-import time
 import numpy as np
 import samplerate
 import sounddevice as sd
 from stfu.core.audio_format import AudioFormat
 from stfu.core.pipeline import Pipeline
 from stfu.audio.transport import RingBuffer, DriftServo
+from stfu.audio.capture_stats import AudioTelemetry, _first_inference_status
+from stfu.audio.capture_worker import PipelineWorker, _adjust_channels
 
 _log = logging.getLogger(__name__)
 
@@ -15,49 +16,6 @@ _INPUT_QUEUE_CHUNKS = 8
 _RING_CHUNKS = 8
 _TARGET_FILL_CHUNKS = 2
 _SERVO_UPDATE_EVERY_CHUNKS = 250  # ~5s con chunks de 20ms
-_SPECTRUM_UPDATE_EVERY_CHUNKS = 5  # rfft es caro: no correrlo cada chunk
-_SPECTRUM_BINS = 48
-_SPECTRUM_MIN_HZ = 20.0
-_SPECTRUM_MAX_HZ = 20000.0
-_DB_FLOOR = -120.0
-_EPS = 1e-9
-
-
-def _first_inference_status(plugins) -> dict | None:
-    """runtime_status del primer plugin de inferencia en el pipeline (duck
-    typing: solo el plugin ONNX NC lo expone hoy), o None si no hay ninguno."""
-    for plugin in plugins:
-        status = getattr(plugin, "runtime_status", None)
-        if status is not None:
-            return status
-    return None
-
-
-def _rms_db(audio: np.ndarray) -> float:
-    rms = float(np.sqrt(np.mean(np.square(audio, dtype=np.float64))))
-    return max(_DB_FLOOR, 20.0 * np.log10(rms + _EPS))
-
-
-def _mono_mix(audio: np.ndarray) -> np.ndarray:
-    if audio.ndim == 1:
-        return audio
-    return audio.mean(axis=1)
-
-
-def _log_spaced_spectrum_db(mono: np.ndarray, sample_rate: int) -> list:
-    """Magnitud del rfft agrupada en bins log-espaciados (20Hz..20kHz), en dB."""
-    magnitudes = np.abs(np.fft.rfft(mono))
-    freqs = np.fft.rfftfreq(len(mono), d=1.0 / sample_rate)
-    edges = np.geomspace(_SPECTRUM_MIN_HZ, _SPECTRUM_MAX_HZ, _SPECTRUM_BINS + 1)
-    bins_db = []
-    for lo, hi in zip(edges[:-1], edges[1:]):
-        mask = (freqs >= lo) & (freqs < hi)
-        if np.any(mask):
-            magnitude = float(magnitudes[mask].mean())
-            bins_db.append(max(_DB_FLOOR, 20.0 * np.log10(magnitude + _EPS)))
-        else:
-            bins_db.append(_DB_FLOOR)
-    return bins_db
 
 
 def _wasapi_auto_convert() -> "sd.WasapiSettings | None":
@@ -78,6 +36,11 @@ class CaptureThread:
     inferencia) corre en un worker propio. Entre worker y salida hay un ring
     con servo de drift: dos dispositivos tienen relojes independientes y sin
     corrección ppm el buffer se vacía/llena cada pocos minutos.
+
+    Compone dos colaboradores con dependencias explícitas: `PipelineWorker`
+    (procesa/pasa el chunk y aplica swaps de plugin) y `AudioTelemetry`
+    (acumula dB/espectro para `stats`). Esta clase retiene el ciclo de vida
+    de los streams, el hilo worker y el ring/servo/resampler.
     """
 
     def __init__(
@@ -96,15 +59,13 @@ class CaptureThread:
         self._input_stream: sd.InputStream | None = None
         self._output_stream: sd.OutputStream | None = None
         self._in_queue: queue.Queue = queue.Queue(maxsize=_INPUT_QUEUE_CHUNKS)
-        self._swap_queue: queue.Queue = queue.Queue()
         self._ring: RingBuffer | None = None
         self._servo: DriftServo | None = None
         self._resampler: samplerate.Resampler | None = None
         self._worker: threading.Thread | None = None
         self._stop_event = threading.Event()
-        self._latency_ms: float = 0.0
-        self._pipeline_failed = False
-        self._bypass = False
+        self._pipeline_worker = PipelineWorker(pipeline)
+        self._telemetry = AudioTelemetry()
         # Invariante: cada contador tiene UN solo hilo escritor (input CB o
         # output CB); con el GIL los += no pierden updates. No agregar
         # escritores sin repensar esto.
@@ -113,11 +74,6 @@ class CaptureThread:
         self._queue_drops: int = 0
         self._worker_failed: bool = False
         self._chunks_since_update: int = 0
-        self._audio_pre_db: float = _DB_FLOOR
-        self._audio_post_db: float = _DB_FLOOR
-        self._spectrum_pre: list = []
-        self._spectrum_post: list = []
-        self._chunks_since_spectrum: int = 0
 
     def start(self) -> None:
         self._pipeline.compile(self._fmt)
@@ -200,24 +156,15 @@ class CaptureThread:
         self._pipeline.clear()
 
     def request_plugin_swap(self, index: int, plugin) -> None:
-        self._swap_queue.put((index, plugin))
+        self._pipeline_worker.request_swap(index, plugin)
 
     def set_bypass(self, on: bool) -> None:
         """Escritura atómica de un bool: el GIL garantiza que el worker nunca
         ve un estado a medio escribir, sin necesitar lock."""
-        self._bypass = on
+        self._pipeline_worker.set_bypass(on)
 
     def _drain_swaps(self) -> None:
-        while True:
-            try:
-                index, plugin = self._swap_queue.get_nowait()
-            except queue.Empty:
-                return
-            try:
-                self._pipeline.replace_plugin(index, plugin)
-                self._pipeline_failed = False  # un modelo nuevo resetea el estado failed
-            except Exception:
-                _log.exception("swap de plugin %d falló", index)
+        self._pipeline_worker.drain_swaps()
 
     def _worker_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -251,48 +198,10 @@ class CaptureThread:
             self._chunks_since_update = 0
 
     def _record_audio_telemetry(self, pre: np.ndarray, post: np.ndarray) -> None:
-        """RMS pre/post es barato y corre cada chunk; el rfft del espectro es
-        caro y solo corre cada _SPECTRUM_UPDATE_EVERY_CHUNKS para no comerse
-        el presupuesto de 20ms del worker. Es observabilidad, nunca debe
-        tumbar el worker: un chunk malformado (p.ej. un plugin que devuelve
-        un array vacío sin lanzar excepción) degrada la telemetría de este
-        tick en vez de matar el audio. Por eso se calcula todo en variables
-        locales y solo se confirma en self si nada explotó."""
-        try:
-            pre_db = _rms_db(pre)
-            post_db = _rms_db(post)
-            chunks_since_spectrum = self._chunks_since_spectrum + 1
-            spectrum_pre = self._spectrum_pre
-            spectrum_post = self._spectrum_post
-            if chunks_since_spectrum >= _SPECTRUM_UPDATE_EVERY_CHUNKS:
-                chunks_since_spectrum = 0
-                spectrum_pre = _log_spaced_spectrum_db(_mono_mix(pre), self._fmt.sample_rate)
-                spectrum_post = _log_spaced_spectrum_db(_mono_mix(post), self._fmt.sample_rate)
-        except Exception:
-            _log.exception("telemetría de audio falló para este chunk; se mantienen valores previos")
-            return
-        self._audio_pre_db = pre_db
-        self._audio_post_db = post_db
-        self._chunks_since_spectrum = chunks_since_spectrum
-        self._spectrum_pre = spectrum_pre
-        self._spectrum_post = spectrum_post
+        self._telemetry.record(pre, post, self._fmt.sample_rate)
 
     def _process_or_passthrough(self, chunk: np.ndarray) -> np.ndarray:
-        """Una excepción de plugin no mata el worker: marca el estado y el
-        audio sigue fluyendo sin procesar hasta que el usuario reinicie."""
-        if self._bypass:
-            return chunk
-        if self._pipeline_failed:
-            return chunk
-        t0 = time.perf_counter()
-        try:
-            processed = self._pipeline.process(chunk)
-        except Exception:
-            _log.exception("pipeline crashed; el target continúa en passthrough")
-            self._pipeline_failed = True
-            return chunk
-        self._latency_ms = (time.perf_counter() - t0) * 1000.0
-        return processed
+        return self._pipeline_worker.process(chunk)
 
     def _input_callback(
         self, indata: np.ndarray, frames: int, time_info, status
@@ -317,7 +226,7 @@ class CaptureThread:
 
     @property
     def measured_latency_ms(self) -> float:
-        return self._latency_ms
+        return self._pipeline_worker.latency_ms
 
     @property
     def playback_active(self) -> bool:
@@ -326,6 +235,10 @@ class CaptureThread:
     @property
     def worker_failed(self) -> bool:
         return self._worker_failed
+
+    @property
+    def _pipeline_failed(self) -> bool:
+        return self._pipeline_worker.pipeline_failed
 
     @property
     def stats(self) -> dict:
@@ -337,18 +250,12 @@ class CaptureThread:
             "queue_drops": self._queue_drops + (self._ring.overflows if self._ring else 0),
             "ring_fill": self._ring.fill if self._ring else 0,
             "drift_ppm": round(self._servo.ppm, 2) if self._servo else 0.0,
-            "pipeline_failed": self._pipeline_failed,
-            "bypass": self._bypass,
+            "pipeline_failed": self._pipeline_worker.pipeline_failed,
+            "bypass": self._pipeline_worker.bypass,
             "stages": self._pipeline.stage_metrics(),
             "total_latency_ms": round(self._pipeline.total_latency_ms(), 2),
             "inference": _first_inference_status(self._pipeline._plugins),
-            "audio": {
-                "pre_db": round(self._audio_pre_db, 1),
-                "post_db": round(self._audio_post_db, 1),
-                "reduction_db": round(self._audio_pre_db - self._audio_post_db, 1),
-                "spectrum_pre": self._spectrum_pre,
-                "spectrum_post": self._spectrum_post,
-            },
+            "audio": self._telemetry.snapshot(),
         }
 
 
@@ -360,12 +267,3 @@ def _close_stream(stream) -> None:
         stream.close()
     except Exception:
         _log.warning("error cerrando stream de audio", exc_info=True)
-
-
-def _adjust_channels(audio: np.ndarray, out_ch: int) -> np.ndarray:
-    proc_ch = audio.shape[1]
-    if proc_ch == out_ch:
-        return audio
-    if proc_ch == 1 and out_ch > 1:
-        return np.repeat(audio, out_ch, axis=1)
-    return audio[:, :out_ch]
