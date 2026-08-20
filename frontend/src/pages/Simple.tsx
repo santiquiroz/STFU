@@ -27,7 +27,10 @@ export function Simple() {
 
   // Reconciliación con el estado real del backend
   useEffect(() => {
-    if (feeder && !micBusy) setMicOn(feeder.active);
+    if (feeder && !micBusy) {
+      setMicOn(feeder.active);
+      if (!feeder.active) setMusicMode(false);
+    }
   }, [feeder, micBusy]);
 
   const inputs = devices.filter((d) => d.channels_in > 0);
@@ -113,6 +116,8 @@ export function Simple() {
       );
       setMicOn(true);
       setMusicMode(true);
+      const s = preset.plugins[0]?.parameters?.strength;
+      if (typeof s === "number") setStrength(Math.round(s * 100));
       queryClient.invalidateQueries({ queryKey: ["feeder-status"] });
       queryClient.invalidateQueries({ queryKey: ["status"] });
     } catch (e) {
@@ -131,8 +136,9 @@ export function Simple() {
     if (!micOn) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.code !== "Space") return;
+      if (e.code !== "Space" || e.repeat) return;
       if (isTypingTarget(document.activeElement)) return;
+      if (bypassMutation.isPending) return;
       e.preventDefault();
       toggleBypass();
     }
@@ -140,7 +146,7 @@ export function Simple() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micOn, isBypassed]);
+  }, [micOn, isBypassed, bypassMutation.isPending]);
 
   const latency = status?.latency_ms ?? 0;
 
