@@ -16,16 +16,18 @@ export function PresetPicker({ currentChain, onLoadChain }: PresetPickerProps) {
 
   const [presetName, setPresetName] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [loadingPreset, setLoadingPreset] = useState<string | null>(null);
 
   const handleLoadPreset = async (name: string) => {
+    setLoadError(null);
     setLoadingPreset(name);
     try {
       const preset = await api.getPreset(name);
       onLoadChain(preset.plugins);
     } catch (e) {
-      setSaveError(extractError(e));
+      setLoadError(extractError(e));
     } finally {
       setLoadingPreset(null);
     }
@@ -83,6 +85,10 @@ export function PresetPicker({ currentChain, onLoadChain }: PresetPickerProps) {
       {/* Presets list section */}
       <Card className="flex flex-col gap-3">
         <div className="text-sm font-semibold text-white">Escenas</div>
+
+        {loadError && (
+          <div className="text-xs text-red-300">{loadError}</div>
+        )}
 
         {isLoading ? (
           <div className="flex justify-center py-6">
