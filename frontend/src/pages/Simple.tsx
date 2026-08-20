@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
 import { useBypass } from "../hooks/useBypass";
 import { api } from "../services/api";
 import { extractError, Badge, Toggle, Button } from "../components/ui";
+import { StageMeter } from "../components/StageMeter";
 
 export function Simple() {
   const queryClient = useQueryClient();
@@ -15,6 +16,13 @@ export function Simple() {
   const [selectedTestOut, setSelectedTestOut] = useState<number | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
   const [musicMode, setMusicMode] = useState(false);
+  // Una vez que el usuario toca el slider/picker en esta sesión, su elección
+  // manda: el poll de feeder-status ya no debe pisarla con el valor del
+  // backend (evita pelear un drag activo o revertir una elección explícita).
+  // Antes de eso, reconciliamos libremente para reflejar un feeder que
+  // arrancó fuera de sesión (reload, otro cliente, DefaultDeviceWatcher).
+  const userTouchedStrengthRef = useRef(false);
+  const userTouchedInputRef = useRef(false);
 
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
@@ -30,6 +38,12 @@ export function Simple() {
     if (feeder && !micBusy) {
       setMicOn(feeder.active);
       if (!feeder.active) setMusicMode(false);
+      if (feeder.strength != null && !userTouchedStrengthRef.current) {
+        setStrength(Math.round(feeder.strength * 100));
+      }
+      if (feeder.input_device_id != null && !userTouchedInputRef.current) {
+        setSelectedInput(feeder.input_device_id);
+      }
     }
   }, [feeder, micBusy]);
 
@@ -183,7 +197,10 @@ export function Simple() {
               <select
                 className="mt-1 text-xs bg-zinc-700 rounded px-2 py-1 text-zinc-300 w-48 truncate"
                 value={effectiveInput}
-                onChange={(e) => setSelectedInput(Number(e.target.value))}
+                onChange={(e) => {
+                  userTouchedInputRef.current = true;
+                  setSelectedInput(Number(e.target.value));
+                }}
               >
                 {inputs.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -211,7 +228,10 @@ export function Simple() {
             min={0}
             max={100}
             value={strength}
-            onChange={(e) => setStrength(Number(e.target.value))}
+            onChange={(e) => {
+              userTouchedStrengthRef.current = true;
+              setStrength(Number(e.target.value));
+            }}
             onMouseUp={handleStrengthRelease}
             onTouchEnd={handleStrengthRelease}
             className="w-full accent-green-500"
@@ -222,7 +242,9 @@ export function Simple() {
           <div>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs text-zinc-400">A/B — Original ⇄ Limpio</p>
-              <p className="text-[10px] text-zinc-600">barra espaciadora</p>
+              <p className="text-[10px] text-zinc-600" title="Ctrl+Alt+M funciona aunque STFU no tenga foco">
+                barra espaciadora · Ctrl+Alt+M
+              </p>
             </div>
             <div className="flex rounded-lg overflow-hidden border border-zinc-700">
               <button
@@ -281,15 +303,21 @@ export function Simple() {
         onClick={handleMusicMode}
         disabled={micBusy || effectiveInput === undefined}
         className="w-full flex items-center justify-center gap-2"
+        title="Ctrl+Alt+N funciona aunque STFU no tenga foco"
       >
         🎵 Modo música
         {musicMode && <Badge label="activo" tone="green" />}
       </Button>
+      <p className="text-center text-[10px] text-zinc-600 -mt-3">Ctrl+Alt+N</p>
 
       <div className="flex flex-col items-center gap-2">
         <p className="text-center text-zinc-600 text-xs">
           {latency > 0 ? `Latencia: ${latency.toFixed(1)} ms` : "Latencia: —"}
         </p>
+
+        {micOn && status?.streams?.feeder?.stages?.length ? (
+          <StageMeter stages={status.streams.feeder.stages} />
+        ) : null}
 
         {micOn && status?.streams?.feeder?.inference && (
           <div className="flex gap-2">

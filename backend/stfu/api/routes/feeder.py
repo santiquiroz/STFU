@@ -35,6 +35,7 @@ def _feeder_playback_active() -> bool:
 def feeder_status():
     bridge = find_bridge_output()
     active = _TARGET in engine.active_targets()
+    runtime = engine.runtime_state(_TARGET) if active else None
     return {
         "bridge_present": bridge is not None,
         "bridge_name": BRIDGE_RENDER_NAME,
@@ -43,6 +44,10 @@ def feeder_status():
         # Distingue 'activo' de 'activo y saliendo audio': si el output stream
         # falló al abrir, el thread sigue registrado pero descarta el audio.
         "playback_active": _feeder_playback_active() if active else False,
+        # Permite al frontend reconciliar slider/picker tras un reload o un
+        # arranque out-of-session (otro cliente, o el DefaultDeviceWatcher).
+        "strength": runtime["strength"] if runtime else None,
+        "input_device_id": runtime["input_device_id"] if runtime else None,
     }
 
 
@@ -100,3 +105,38 @@ def feeder_bypass(update: BypassUpdate):
     if not ok:
         raise HTTPException(404, "feeder no está activo")
     return {"ok": True, "bypass": update.on}
+
+
+class PluginInsert(BaseModel):
+    index: int
+    plugin_id: str
+    parameters: dict = {}
+
+
+@router.post("/plugin")
+def feeder_insert_plugin(body: PluginInsert):
+    """Inserta un plugin en la cadena viva sin reiniciar el feeder (sin
+    corte de audio) — ver AudioEngine.insert_plugin."""
+    try:
+        latency = engine.insert_plugin(
+            _TARGET, body.index,
+            {"plugin_id": body.plugin_id, "parameters": body.parameters},
+        )
+    except (IndexError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    if latency is None:
+        raise HTTPException(404, "feeder no está activo")
+    return {"ok": True, "latency_ms": latency}
+
+
+@router.delete("/plugin/{index}")
+def feeder_remove_plugin(index: int):
+    """Quita un plugin de la cadena viva sin reiniciar el feeder (sin corte
+    de audio) — ver AudioEngine.remove_plugin."""
+    try:
+        latency = engine.remove_plugin(_TARGET, index)
+    except IndexError as exc:
+        raise HTTPException(400, str(exc))
+    if latency is None:
+        raise HTTPException(404, "feeder no está activo")
+    return {"ok": True, "latency_ms": latency}

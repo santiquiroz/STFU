@@ -51,8 +51,14 @@ tocar audiodg:
    **guardando backup del CLSID previo** (`~/.stfu/apo_fx_backup.json`);
    `DELETE /apo/register/{flow}` restaura el original. Reinicia `audiosrv`
    (corta el audio del sistema ~2s). Requiere admin.
-3. **Reinstalar el driver de audio borra el registro** — re-registrar desde
-   la UI (pendiente: auto-repair).
+3. **Reinstalar el driver de audio borra el registro**, y un cumulative
+   update de Windows 11 24H2 puede desactivar el APO en silencio. Auto-repair
+   ya está shipped: `stfu/apo/health.py` compara los endpoints registrados
+   contra su estado real, `ApoHealthMonitor` corre el chequeo en background
+   (con un pase inmediato al arranque del backend) y publica un snapshot
+   cacheado; `GET /apo/health` expone el diagnóstico y `POST /apo/repair`
+   re-registra los endpoints desactivados (elevado, reinicia `audiosrv` una
+   sola vez para todo el batch).
 4. Clientes en modo exclusivo (WASAPI exclusive/ASIO) **bypasean** los APO.
 
 CLSIDs (deben coincidir en `src/guids.h`, `backend/stfu/apo/constants.py`,

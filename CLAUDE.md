@@ -4,21 +4,19 @@ Instrucciones de proyecto para asistentes AI (Claude, Copilot, etc.). Contexto d
 
 ## Qué es STFU
 
-App open-source de Windows: cancelación de ruido de micrófono con IA (DeepFilterNet3), corriendo en cualquier GPU (DirectML) o CPU. Meta: reemplazar NVIDIA Broadcast/Krisp sin requerir hardware específico, sin dependencias propietarias.
+App open-source de Windows: cancelación de ruido de micrófono con IA, corriendo en cualquier GPU (DirectML) o CPU. Meta: reemplazar NVIDIA Broadcast/Krisp sin requerir hardware específico, sin dependencias propietarias.
 
-## Estado actual (2026-07): PIVOTE a driver virtual (v2)
+## Estado actual (v1.7): APO es el mecanismo shipped y mantenido
 
-**Decisión clave:** los APO de software (el enfoque v1.1) **no cargan en micrófonos USB** — verificado exhaustivamente en hardware real (Blue Snowball: 1 propiedad FX de fábrica vs ~130 de un codec Realtek de placa base; audiodg nunca instancia el APO). Los mics USB audio-class no tienen grafo de efectos donde inyectar un APO.
+**El APO (Audio Processing Object) es el mecanismo de cancelación de ruido activo y en producción.** Registra un APO en modo usuario sobre el endpoint de audio existente (mismo mecanismo que usan los fabricantes de tarjetas de sonido); `audiodg.exe` lo invoca inline en cada bloque de audio. F3 agregó health-check + auto-repair: `health.py`, `repair_registrations()`, endpoint `POST /apo/repair` y `ApoHealthMonitor` detectan y reparan solos cuando Windows 11 24H2 desactiva el APO tras una actualización acumulativa.
 
-**Rumbo v2:** driver de **micrófono virtual "STFU Microphone"** (patrón NVIDIA/Krisp) que funciona con cualquier dispositivo. El plan completo está en `docs/superpowers/plans/2026-07-03-v2-virtual-mic-driver.md` y los cambios exactos del kernel en `driver/DRIVER-CHANGES.md`. **Léelos al retomar.**
+**El driver de micrófono virtual "STFU Microphone" (v2) está PAUSADO por decisión explícita del usuario** — no es el foco activo. Está compilado y test-signed pero nunca se instaló en una máquina real. El plan histórico sigue en `docs/superpowers/plans/2026-07-03-v2-virtual-mic-driver.md` y los cambios de kernel en `driver/DRIVER-CHANGES.md`, por si se retoma en el futuro, pero no guían el trabajo actual.
 
-## Arquitectura v2 (Modelo A — kernel mínimo)
+## Superficie actual (v1.6 Voice Studio, shipped)
 
-```
-[mic físico] --WASAPI--> [Python: DFN3 + drift servo] --WASAPI render--> [STFU Audio Bridge]
-                                                              --RingBuffer kernel--> [STFU Microphone] --> Discord/Zoom
-```
-El driver es un "cable tonto": el DSP jamás entra al kernel. Todo el procesamiento (captura, DeepFilterNet3, servo de drift, resampleo) queda en el backend Python **que ya está construido y validado**.
+- Tab **Estudio**: editor de cadena DSP, visualizador de espectro en vivo, medidor de reducción de dB, presets de escena (Gaming/Reunión/Streaming/Podcast/Música/Accesibilidad), A/B bypass (barra espaciadora), Modo música.
+- **Model-hub UI** (`Models.tsx`): descarga/activación/borrado de modelos ONNX curados por dispositivo.
+- **APO health/auto-repair** (ver arriba).
 
 ## Layout del repo
 
@@ -27,9 +25,9 @@ El driver es un "cable tonto": el DSP jamás entra al kernel. Todo el procesamie
 | `backend/stfu/core/` | Pipeline, FormatAdapter (soxr), logging |
 | `backend/stfu/plugins/builtin/` | DeepFilterNet3 (ventana deslizante), EQ RBJ, Gain |
 | `backend/stfu/audio/` | Captura WASAPI (auto_convert), transport (RingBuffer + DriftServo), engine, devices |
-| `backend/stfu/api/routes/feeder.py` | **Feeder v2**: mic físico → DFN3 → STFU Audio Bridge (o salida de prueba sin driver) |
-| `backend/stfu/apo/` | **Archivado** — enfoque APO (solo sirve en endpoints de placa base, no USB) |
-| `driver/` | **Driver v2** — fork de VirtualDrivers/Virtual-Audio-Driver + RingBuffer de AudioMirror. Ver `DRIVER-CHANGES.md` |
+| `backend/stfu/api/routes/feeder.py` | Feeder — mic físico → plugin de cancelación → STFU Audio Bridge (ruta de prueba ligada al driver v2, pausado) |
+| `backend/stfu/apo/` | **Mecanismo shipped y mantenido** — registro del APO, puente named-pipe, `ApoEngine`, health-check + auto-repair (`health.py`, `repair_registrations()`, `POST /apo/repair`, `ApoHealthMonitor`) |
+| `driver/` | **Driver v2 — PAUSADO** (decisión explícita del usuario, no es el foco activo). Compilado y test-signed, nunca instalado en máquina real. Fork de VirtualDrivers/Virtual-Audio-Driver + RingBuffer de AudioMirror. Ver `DRIVER-CHANGES.md` |
 | `frontend/` | Tauri 2 + React 19. Simple.tsx usa el modelo feeder |
 | `docs/superpowers/` | Specs, planes, auditorías |
 
@@ -44,7 +42,7 @@ cd backend && .venv\Scripts\python.exe -m pytest tests/ -q   # ~99 tests
 cd backend && .venv\Scripts\pyinstaller.exe --clean --noconfirm stfu-backend.spec  # SIEMPRE --clean
 cd frontend && npm run tauri build   # correr dentro del entorno VsDevCmd de BuildTools
 
-# Driver (SOLO en máquina con Secure Boot OFF + EWDK build 26100)
+# Driver v2 — PAUSADO, no es el foco activo (SOLO en máquina con Secure Boot OFF + EWDK build 26100)
 cd driver && ./build.ps1              # EWDK msbuild
 ./install-test.ps1 -InfPath <ruta>    # self-signed + pnputil
 ```

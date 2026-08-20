@@ -95,3 +95,160 @@ def test_set_parameter_routes_to_pipeline_for_active_target():
         ok = engine.set_parameter("feeder", 0, "strength", 0.7)
         assert ok is True
         created[0].pipeline.set_parameter.assert_called_once_with(0, "strength", 0.7)
+
+
+def test_set_parameter_writes_through_to_stored_config():
+    """Regresión: set_parameter solo mutaba el pipeline vivo, nunca
+    self._configs. runtime_state() (y restart_with_devices, que reusa
+    plugin_configs) seguían reportando el strength de arranque para
+    siempre — un cambio de slider quedaba fantasma tras un reload o un
+    restart por cambio de default device."""
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=1, output_device_id=2,
+            plugin_configs=[{"plugin_id": "deepfilternet3", "parameters": {"strength": 0.85}}],
+        )
+        ok = engine.set_parameter("feeder", 0, "strength", 0.30)
+        assert ok is True
+        assert engine.runtime_state("feeder") == {"input_device_id": 1, "strength": 0.30}
+
+        # restart_with_devices reusa plugin_configs: el valor nuevo, no el de arranque.
+        engine.restart_with_devices("feeder", input_device_id=5)
+        assert engine.runtime_state("feeder") == {"input_device_id": 5, "strength": 0.30}
+
+
+def test_current_devices_none_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.current_devices("feeder") is None
+
+
+def test_current_devices_returns_active_target_devices():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        assert engine.current_devices("feeder") == (1, 2)
+
+
+def test_runtime_state_none_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.runtime_state("feeder") is None
+
+
+def test_runtime_state_returns_input_and_strength():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=3, output_device_id=2,
+            plugin_configs=[{"plugin_id": "deepfilternet3", "parameters": {"strength": 0.7}}],
+        )
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": 0.7}
+
+
+def test_runtime_state_strength_none_when_plugin_lacks_parameter():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=3, output_device_id=2,
+            plugin_configs=[{"plugin_id": "gain", "parameters": {}}],
+        )
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": None}
+
+
+def test_runtime_state_strength_none_when_no_plugins():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=3, output_device_id=2, plugin_configs=[])
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": None}
+
+
+def test_restart_with_devices_noop_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.restart_with_devices("feeder", input_device_id=5) is None
+
+
+def test_restart_with_devices_swaps_input_and_stops_old_thread():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", input_device_id=5)
+        assert engine.current_devices("feeder") == (5, 2)
+        created[0].stop.assert_called_once()  # el viejo se paró
+        assert len(created) == 2
+        assert engine.active_targets() == ["feeder"]
+
+
+def test_restart_with_devices_swaps_output_only():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", output_device_id=9)
+        assert engine.current_devices("feeder") == (1, 9)
+
+
+def test_stop_clears_stored_config():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.stop("feeder")
+        assert engine.current_devices("feeder") is None
+
+
+def test_restart_with_devices_swaps_both_input_and_output_in_one_call():
+    """Cubre el caso combo-headset: input+output cambian en un solo restart,
+    no en dos llamadas separadas (ver device_watcher.tick())."""
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", input_device_id=5, output_device_id=9)
+        assert engine.current_devices("feeder") == (5, 9)
+        assert len(created) == 2  # un solo thread nuevo, no dos
+
+
+def test_restart_with_devices_aborts_if_target_stopped_during_reopen():
+    """TOCTOU: si engine.stop(target) llega MIENTRAS restart_with_devices
+    todavía está abriendo el device nuevo (thread.start() es I/O bloqueante
+    en la vida real), el stop del usuario debe ganar -- el target queda
+    detenido, el thread recién abierto se descarta sin registrarse."""
+    created = []
+    engine = AudioEngine()
+
+    def factory(**kwargs):
+        m = MagicMock(name=f"CaptureThread{len(created)}")
+        m.pipeline = MagicMock()
+        if len(created) == 1:
+            # El 2do thread es el que abre restart_with_devices: su start()
+            # dispara el stop() concurrente del usuario, simulando que llega
+            # justo mientras el device nuevo todavía se estaba abriendo.
+            m.start.side_effect = lambda: engine.stop("feeder")
+        created.append(m)
+        return m
+
+    with patch("stfu.audio.engine.CaptureThread", side_effect=factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        result = engine.restart_with_devices("feeder", input_device_id=5)
+
+    assert result is None  # el restart se descartó, no se registró
+    assert engine.active_targets() == []  # el stop() del usuario gana: sigue detenido
+    assert engine.current_devices("feeder") is None
+    created[0].stop.assert_called_once()  # lo paró el stop() del usuario
+    created[1].stop.assert_called_once()  # el device nuevo se descarta sin registrar

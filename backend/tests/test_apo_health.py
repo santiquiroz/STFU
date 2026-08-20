@@ -71,5 +71,24 @@ def test_needs_repair_false_when_all_ok():
         assert health.needs_repair() is False
 
 
+def test_failing_registrations_names_only_the_failing_endpoints():
+    checks = [
+        {"endpoint_guid": "g", "flow": "Capture", "state": "deactivated"},
+        {"endpoint_guid": "h", "flow": "Render", "state": "ok"},
+        {"endpoint_guid": "i", "flow": "Capture", "state": "endpoint-missing"},
+    ]
+    with patch.object(health, "check_registrations", return_value=checks):
+        failing = health.failing_registrations()
+    assert {r["endpoint_guid"] for r in failing} == {"g", "i"}
+    assert all(r["state"] != "ok" for r in failing)
+
+
+def test_failing_registrations_empty_when_all_ok():
+    with patch.object(health, "check_registrations", return_value=[
+        {"endpoint_guid": "g", "flow": "Capture", "state": "ok"},
+    ]):
+        assert health.failing_registrations() == []
+
+
 def health_states(result):
     return {r["state"] for r in result}

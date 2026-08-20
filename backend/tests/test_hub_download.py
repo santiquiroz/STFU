@@ -32,7 +32,9 @@ def hub(tmp_path, monkeypatch):
     model_bytes = b"fake onnx bytes"
     registry = ModelRegistry(tmp_path / "models")
     manager = HubManager(registry, _curated_dir(tmp_path, model_bytes))
-    monkeypatch.setattr(manager, "_fetch", lambda manifest, dest: dest.write_bytes(model_bytes))
+    monkeypatch.setattr(
+        manager, "_fetch", lambda manifest, dest, on_progress=None: dest.write_bytes(model_bytes)
+    )
     return manager
 
 
@@ -50,7 +52,9 @@ def test_download_verifies_and_registers(hub):
 
 
 def test_download_rejects_sha_mismatch(hub, monkeypatch):
-    monkeypatch.setattr(hub, "_fetch", lambda manifest, dest: dest.write_bytes(b"tampered"))
+    monkeypatch.setattr(
+        hub, "_fetch", lambda manifest, dest, on_progress=None: dest.write_bytes(b"tampered")
+    )
     with pytest.raises(Sha256Mismatch):
         hub.download("fastenhancer-tiny")
     assert hub.catalog()[0]["installed"] is False

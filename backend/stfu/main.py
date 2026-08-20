@@ -1,9 +1,11 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from stfu.core.logging import setup_logging
 
 setup_logging()
+_log = logging.getLogger(__name__)
 from stfu.api.routes.devices import router as devices_router
 from stfu.api.routes.pipeline import router as pipeline_router
 from stfu.api.routes.models import router as models_router
@@ -12,22 +14,28 @@ from stfu.api.routes.apo import router as apo_router
 from stfu.api.routes.feeder import router as feeder_router
 from stfu.api.routes.plugins import router as plugins_router
 from stfu.api.routes.presets import router as presets_router
-from stfu.api.ws import metering_ws
+from stfu.api.ws import download_progress_ws, metering_ws
 from stfu.audio.engine import engine
+from stfu.hub.download_jobs import download_jobs
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from stfu.audio.degrade_monitor import DegradeMonitor
-    from stfu.apo.health_monitor import ApoHealthMonitor
-    from stfu.apo.health import check_registrations
+    from stfu.audio.device_watcher import watcher as default_device_watcher
+    from stfu.apo.health_monitor import apo_health_monitor
     from stfu.api.routes.models import _hub
     monitor = DegradeMonitor(engine, lambda: _hub().catalog())
     monitor.start()
-    apo_health_monitor = ApoHealthMonitor(check_registrations)
+    default_device_watcher.start()
     apo_health_monitor.start()
+    try:
+        apo_health_monitor.check_now()
+    except Exception:
+        _log.exception("health-check del APO al arranque falló")
     yield
     monitor.stop()
+    default_device_watcher.stop()
     apo_health_monitor.stop()
     engine.stop_all()
     from stfu.apo.apo_engine import apo_engine
@@ -67,8 +75,9 @@ def _status_payload() -> dict:
         "apo": apo_engine.status(),
     }
     try:
-        from stfu.apo.health import needs_repair, check_registrations
-        payload["apo_health"] = {"needs_repair": needs_repair(), "endpoints": check_registrations()}
+        from stfu.apo.health_monitor import apo_health_monitor
+        snapshot = apo_health_monitor.get_snapshot()
+        payload["apo_health"] = {"needs_repair": snapshot.needs_repair, "endpoints": snapshot.endpoints}
     except Exception:
         payload["apo_health"] = {"needs_repair": False, "endpoints": []}
     return payload
@@ -82,3 +91,15 @@ def status():
 @app.websocket("/ws/metering")
 async def ws_metering(websocket: WebSocket):
     await metering_ws(websocket, _status_payload)
+
+
+def _download_job_payload(job_id: str) -> dict:
+    job = download_jobs.get(job_id)
+    if job is None:
+        return {"status": "error", "downloaded": 0, "total": None, "pct": None, "error": "job no encontrado"}
+    return job.to_payload()
+
+
+@app.websocket("/ws/download/{job_id}")
+async def ws_download_progress(websocket: WebSocket, job_id: str):
+    await download_progress_ws(websocket, lambda: _download_job_payload(job_id))

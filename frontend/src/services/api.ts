@@ -1,6 +1,8 @@
 import axios from "axios";
 
-const client = axios.create({ baseURL: "http://localhost:8765" });
+const API_BASE = "http://localhost:8765";
+const WS_BASE = API_BASE.replace(/^http/, "ws");
+const client = axios.create({ baseURL: API_BASE });
 
 export interface DeviceInfo {
   id: number;
@@ -22,6 +24,18 @@ export interface ModelInfo {
   supported_devices: string[];
   tags: string[];
   installed: boolean;
+}
+
+export interface DownloadJobStart {
+  job_id: string;
+}
+
+export interface DownloadProgress {
+  status: "pending" | "downloading" | "done" | "error";
+  downloaded: number;
+  total: number | null;
+  pct: number | null;
+  error: string | null;
 }
 
 export interface InferenceStatus {
@@ -155,6 +169,9 @@ export const api = {
     bridge_name: string;
     bridge_device_id: number | null;
     active: boolean;
+    playback_active: boolean;
+    strength: number | null;
+    input_device_id: number | null;
   }> => client.get("/feeder/status").then((r) => r.data),
 
   startFeeder: (
@@ -185,6 +202,20 @@ export const api = {
         value,
       })
       .then((r) => r.data),
+
+  insertFeederPlugin: (
+    index: number,
+    pluginId: string,
+    parameters: Record<string, number | string | boolean> = {},
+  ): Promise<{ ok: boolean; latency_ms: number }> =>
+    client
+      .post("/feeder/plugin", { index, plugin_id: pluginId, parameters })
+      .then((r) => r.data),
+
+  removeFeederPlugin: (
+    index: number,
+  ): Promise<{ ok: boolean; latency_ms: number }> =>
+    client.delete(`/feeder/plugin/${index}`).then((r) => r.data),
 
   setParameter: (
     target: "mic" | "speaker",
@@ -251,8 +282,11 @@ export const api = {
   listModels: (): Promise<ModelInfo[]> =>
     client.get("/models").then((r) => r.data),
 
-  downloadModel: (id: string): Promise<{ installed: boolean; path: string }> =>
+  downloadModel: (id: string): Promise<DownloadJobStart> =>
     client.post(`/models/${encodeURIComponent(id)}/download`).then((r) => r.data),
+
+  downloadProgressWsUrl: (jobId: string): string =>
+    `${WS_BASE}/ws/download/${encodeURIComponent(jobId)}`,
 
   activateModel: (
     id: string,
