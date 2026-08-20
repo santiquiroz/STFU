@@ -1,0 +1,11 @@
+{
+  "name": "Streaming",
+  "plugins": [
+    {"plugin_id": "model:fastenhancer-base", "parameters": {"strength": 1.0}},
+    {"plugin_id": "noise_gate", "parameters": {"threshold_db": -45.0, "release_ms": 150.0}},
+    {"plugin_id": "compressor", "parameters": {"threshold_db": -20.0, "ratio": 3.0, "agc": true, "agc_target_db": -16.0}},
+    {"plugin_id": "eq_parametric", "parameters": {"band_4_freq": 3000.0, "band_4_gain_db": 3.0}},
+    {"plugin_id": "de_esser", "parameters": {"freq_hz": 6000.0, "threshold_db": -30.0, "reduction_db": 8.0}},
+    {"plugin_id": "limiter", "parameters": {"ceiling_db": -1.0}}
+  ]
+}

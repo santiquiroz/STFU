@@ -15,6 +15,8 @@ binaries += collect_dynamic_libs('soxr')
 binaries += collect_dynamic_libs('samplerate')
 # Los manifests curados del hub deben viajar en el binario (lineup ONNX)
 datas += [("stfu/hub/curated", "stfu/hub/curated")]
+# Los presets curados (Gaming/Reunión/Streaming/Podcast/Música/Accesibilidad)
+datas += [("stfu/presets/curated", "stfu/presets/curated")]
 # DFN3 (torch/df) es extra opcional legacy — se excluye del instalador ONNX
 
 

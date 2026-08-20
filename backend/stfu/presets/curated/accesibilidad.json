@@ -1,0 +1,9 @@
+{
+  "name": "Accesibilidad",
+  "plugins": [
+    {"plugin_id": "model:fastenhancer-base", "parameters": {"strength": 1.0}},
+    {"plugin_id": "eq_parametric", "parameters": {"band_3_gain_db": 3.0, "band_4_gain_db": 3.0}},
+    {"plugin_id": "compressor", "parameters": {"threshold_db": -24.0, "ratio": 2.0, "agc": true, "agc_target_db": -16.0}},
+    {"plugin_id": "limiter", "parameters": {"ceiling_db": -1.0}}
+  ]
+}

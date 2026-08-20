@@ -1,0 +1,7 @@
+{
+  "name": "Música",
+  "plugins": [
+    {"plugin_id": "model:fastenhancer-tiny", "parameters": {"strength": 0.3}},
+    {"plugin_id": "limiter", "parameters": {"ceiling_db": -1.0}}
+  ]
+}
