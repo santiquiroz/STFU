@@ -236,54 +236,62 @@ class AudioEngine:
     ) -> float | None:
         """Inserta un plugin en el pipeline vivo sin reiniciar el stream:
         se construye y warmupea (setup()) en este hilo, igual que
-        swap_model, y el worker aplica el insert en la lista entre chunks.
-        También escribe en _configs (mismo criterio que set_parameter) para
-        que runtime_state()/restart_with_devices reflejen la cadena viva.
-        None si el target no está activo; IndexError si el índice no entra
-        en la cadena actual."""
+        swap_model — SIEMPRE fuera del lock, para no bloquear otros targets
+        durante la apertura de sesión/dispositivo. La validación del índice,
+        el staging hacia el worker y la escritura a _configs corren en un
+        ÚNICO bloque bajo lock: dos insert/remove concurrentes sobre el
+        MISMO target (dos requests HTTP solapadas — las rutas son `def`
+        sync, corren en threads del threadpool) quedan totalmente
+        serializados. La validación usa len(_configs[target].plugin_configs)
+        — no thread.pipeline._plugins — porque _configs se actualiza en el
+        mismo paso atómico que el staging, mientras que el pipeline vivo lo
+        actualiza el worker de forma asíncrona (puede ir un chunk atrás);
+        usar _configs como fuente de verdad es lo único que garantiza que
+        un segundo insert/remove ve el efecto del primero aunque el worker
+        todavía no lo haya aplicado, evitando el desync permanente + índice
+        mal ubicado que reportó el review de esta task. None si el target
+        no está activo; IndexError si el índice no entra en la cadena
+        lógica actual (incluyendo cambios ya encolados)."""
         from stfu.core.pipeline_factory import build_pipeline
+        staged = build_pipeline([plugin_config], device=device)
+        plugin = staged._plugins[0]
+        plugin.setup(plugin.preferred_format)  # warmup: nunca en el worker, nunca bajo lock
         with self._lock:
             thread = self._threads.get(target)
             config = self._configs.get(target)
-        if thread is None or config is None:
-            return None
-        current_plugins = thread.pipeline._plugins
-        if not 0 <= index <= len(current_plugins):
-            raise IndexError(f"insert index {index} fuera de rango")
-        staged = build_pipeline([plugin_config], device=device)
-        plugin = staged._plugins[0]
-        plugin.setup(plugin.preferred_format)  # warmup: nunca en el worker
-        preview_plugins = list(current_plugins)
-        preview_plugins.insert(index, plugin)
-        latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
-        thread.request_plugin_insert(index, plugin)
-        with self._lock:
-            plugins_cfg = config.get("plugin_configs")
-            if plugins_cfg is not None:
-                plugins_cfg.insert(index, plugin_config)
+            if thread is None or config is None:
+                return None
+            plugins_cfg = config["plugin_configs"]
+            if not 0 <= index <= len(plugins_cfg):
+                raise IndexError(f"insert index {index} fuera de rango")
+            preview_plugins = list(thread.pipeline._plugins)
+            preview_plugins.insert(index, plugin)
+            latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
+            thread.request_plugin_insert(index, plugin)
+            plugins_cfg.insert(index, plugin_config)
         return latency
 
     def remove_plugin(self, target: str, index: int) -> float | None:
-        """Quita un plugin del pipeline vivo sin reiniciar el stream — el
-        worker aplica el remove en la lista entre chunks. Escribe en
-        _configs igual que insert_plugin. None si el target no está activo;
-        IndexError si el índice no entra en la cadena actual."""
+        """Quita un plugin del pipeline vivo sin reiniciar el stream —
+        mismo criterio de serialización que insert_plugin (validación +
+        staging + escritura a _configs en un único bloque bajo lock, contra
+        len(_configs[target].plugin_configs) como fuente de verdad). None
+        si el target no está activo; IndexError si el índice no entra en
+        la cadena lógica actual."""
         with self._lock:
             thread = self._threads.get(target)
             config = self._configs.get(target)
-        if thread is None or config is None:
-            return None
-        current_plugins = thread.pipeline._plugins
-        if not 0 <= index < len(current_plugins):
-            raise IndexError(f"remove index {index} fuera de rango")
-        preview_plugins = list(current_plugins)
-        del preview_plugins[index]
-        latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
-        thread.request_plugin_remove(index)
-        with self._lock:
-            plugins_cfg = config.get("plugin_configs")
-            if plugins_cfg is not None and 0 <= index < len(plugins_cfg):
-                del plugins_cfg[index]
+            if thread is None or config is None:
+                return None
+            plugins_cfg = config["plugin_configs"]
+            if not 0 <= index < len(plugins_cfg):
+                raise IndexError(f"remove index {index} fuera de rango")
+            preview_plugins = list(thread.pipeline._plugins)
+            if index < len(preview_plugins):
+                del preview_plugins[index]
+            latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
+            thread.request_plugin_remove(index)
+            del plugins_cfg[index]
         return latency
 
 

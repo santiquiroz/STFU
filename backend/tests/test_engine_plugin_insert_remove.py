@@ -164,3 +164,72 @@ def test_remove_plugin_leaving_empty_chain_returns_zero_latency():
 
     assert latency == 0.0
     assert engine._configs["feeder"]["plugin_configs"] == []
+
+
+# --- Regresión: serialización de validate+stage+_configs-write bajo un
+# único lock (review de esta task). thread.pipeline._plugins es un mock que
+# nunca avanza entre llamadas (igual que en producción, donde el worker
+# recién lo aplica async, un chunk después) — antes del fix, insert/remove
+# validaban el índice contra ESE snapshot viejo en vez de contra
+# len(_configs[...].plugin_configs), que sí se actualiza en el mismo paso
+# atómico que el staging. Estos tests manejan directamente engine.insert_
+# plugin/remove_plugin con índices que serían válidos contra el snapshot
+# viejo pero ya no lo son contra la cadena lógica actual (equivalente a dos
+# requests HTTP solapadas sobre el mismo target).
+
+def test_remove_plugin_second_call_rejects_index_stale_after_first_removes():
+    engine, thread = _engine_with_active_feeder(
+        ["a", "b", "c"], [{"plugin_id": "gain", "parameters": {}}] * 3,
+    )
+
+    engine.remove_plugin("feeder", 0)  # cadena lógica pasa de 3 a 2 items
+    assert engine._configs["feeder"]["plugin_configs"] == [{"plugin_id": "gain", "parameters": {}}] * 2
+
+    # index=2 era válido ANTES del primer remove (len 3, snapshot del mock)
+    # pero ya no lo es contra la cadena lógica actual (len 2) — debe
+    # rechazarse, no aceptarse silenciosamente contra el pipeline mock
+    # (que nunca se actualiza hasta que el worker drena la cola, igual que
+    # en producción).
+    with pytest.raises(IndexError):
+        engine.remove_plugin("feeder", 2)
+
+    thread.request_plugin_remove.assert_called_once_with(0)  # el 2do nunca se stageó
+    assert engine._configs["feeder"]["plugin_configs"] == [{"plugin_id": "gain", "parameters": {}}] * 2
+
+
+def test_insert_plugin_second_call_rejects_index_stale_after_first_removes():
+    engine, thread = _engine_with_active_feeder(["gain"], [{"plugin_id": "gain", "parameters": {}}])
+
+    engine.remove_plugin("feeder", 0)  # cadena lógica queda vacía
+    assert engine._configs["feeder"]["plugin_configs"] == []
+
+    # index=1 era válido cuando había 1 plugin (insertar al final) pero ya
+    # no lo es contra una cadena vacía (único índice válido: 0). Con el
+    # código viejo, list.insert nunca levanta, así que este índice stale se
+    # hubiera colado en una posición arbitraria en vez de rechazarse.
+    with pytest.raises(IndexError):
+        engine.insert_plugin("feeder", 1, {"plugin_id": "eq_parametric", "parameters": {}})
+
+    thread.request_plugin_insert.assert_not_called()
+    assert engine._configs["feeder"]["plugin_configs"] == []
+
+
+def test_insert_plugin_second_call_sees_updated_length_from_first_insert():
+    """Complemento positivo: dos inserts consecutivos sobre el mismo target
+    deben quedar reflejados en el orden correcto — el segundo ve la
+    longitud actualizada por el primero (_configs), no la del pipeline
+    mock, que el worker todavía no aplicó."""
+    engine, thread = _engine_with_active_feeder(["a"], [{"plugin_id": "gain", "parameters": {}}])
+
+    engine.insert_plugin("feeder", 1, {"plugin_id": "eq_parametric", "parameters": {}})
+    # index=2 solo es válido si el segundo insert ve la cadena lógica ya en
+    # longitud 2 (post primer insert) — la longitud del pipeline mock nunca
+    # avanza porque request_plugin_insert está mockeado.
+    engine.insert_plugin("feeder", 2, {"plugin_id": "noise_gate", "parameters": {}})
+
+    assert thread.request_plugin_insert.call_count == 2
+    assert engine._configs["feeder"]["plugin_configs"] == [
+        {"plugin_id": "gain", "parameters": {}},
+        {"plugin_id": "eq_parametric", "parameters": {}},
+        {"plugin_id": "noise_gate", "parameters": {}},
+    ]
