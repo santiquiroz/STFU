@@ -19,13 +19,16 @@ from stfu.audio.engine import engine
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from stfu.audio.degrade_monitor import DegradeMonitor
+    from stfu.audio.device_watcher import watcher as default_device_watcher
     from stfu.apo.health_monitor import apo_health_monitor
     from stfu.api.routes.models import _hub
     monitor = DegradeMonitor(engine, lambda: _hub().catalog())
     monitor.start()
+    default_device_watcher.start()
     apo_health_monitor.start()
     yield
     monitor.stop()
+    default_device_watcher.stop()
     apo_health_monitor.stop()
     engine.stop_all()
     from stfu.apo.apo_engine import apo_engine

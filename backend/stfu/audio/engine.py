@@ -20,6 +20,11 @@ def _out_channels_for_device(device_id: int) -> int:
 class AudioEngine:
     def __init__(self) -> None:
         self._threads: dict[str, CaptureThread] = {}
+        # Config con la que cada target fue arrancado (device ids + plugin
+        # chain): permite reiniciar un target reusando su cadena de plugins
+        # cuando cambia el default device, sin que el caller tenga que
+        # reenviarla (ver restart_with_devices / DefaultDeviceWatcher).
+        self._configs: dict[str, dict] = {}
         self._lock = threading.Lock()
 
     def start(
@@ -47,6 +52,11 @@ class AudioEngine:
         with self._lock:
             old = self._threads.get(target)
             self._threads[target] = thread
+            self._configs[target] = {
+                "input_device_id": input_device_id,
+                "output_device_id": output_device_id,
+                "plugin_configs": plugin_configs,
+            }
         if old:
             old.stop()
         return pipeline.total_latency_ms()
@@ -54,6 +64,7 @@ class AudioEngine:
     def stop(self, target: str) -> None:
         with self._lock:
             thread = self._threads.pop(target, None)
+            self._configs.pop(target, None)
         if thread:
             thread.stop()
 
@@ -61,8 +72,40 @@ class AudioEngine:
         with self._lock:
             threads = list(self._threads.values())
             self._threads.clear()
+            self._configs.clear()
         for t in threads:
             t.stop()
+
+    def current_devices(self, target: str) -> tuple[int, int] | None:
+        """(input_device_id, output_device_id) con los que corre `target`
+        ahora mismo, o None si no está activo."""
+        with self._lock:
+            config = self._configs.get(target)
+        if config is None:
+            return None
+        return config["input_device_id"], config["output_device_id"]
+
+    def restart_with_devices(
+        self,
+        target: str,
+        input_device_id: int | None = None,
+        output_device_id: int | None = None,
+    ) -> float | None:
+        """Reinicia `target` con la MISMA plugin chain, reemplazando el/los
+        device id(s) dados. Reusa start(), así que hereda la invariante
+        anti-huérfano. None si el target no está activo (nada que reiniciar)."""
+        with self._lock:
+            config = self._configs.get(target)
+        if config is None:
+            return None
+        new_input = input_device_id if input_device_id is not None else config["input_device_id"]
+        new_output = output_device_id if output_device_id is not None else config["output_device_id"]
+        return self.start(
+            target=target,
+            input_device_id=new_input,
+            output_device_id=new_output,
+            plugin_configs=config["plugin_configs"],
+        )
 
     def get_latency_ms(self) -> float:
         with self._lock:

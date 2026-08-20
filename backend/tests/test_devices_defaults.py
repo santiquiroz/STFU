@@ -40,3 +40,8 @@ def test_default_flags_use_wasapi_hostapi_indices(monkeypatch):
 def test_get_default_input_returns_wasapi_default(monkeypatch):
     _patch_sd(monkeypatch)
     assert dev.get_default_input().id == 3
+
+
+def test_get_default_device_ids_returns_wasapi_defaults_directly(monkeypatch):
+    _patch_sd(monkeypatch)
+    assert dev.get_default_device_ids() == (3, 4)

@@ -52,6 +52,12 @@ def _default_device_ids(wasapi_idx: int | None) -> tuple[int | None, int | None]
         return None, None
 
 
+def get_default_device_ids() -> tuple[int | None, int | None]:
+    """(default_input_id, default_output_id) actuales, sin listar todos los
+    dispositivos: barato para pollear desde un watcher (ver device_watcher.py)."""
+    return _default_device_ids(_wasapi_index())
+
+
 def list_devices() -> list[DeviceInfo]:
     wasapi_idx = _wasapi_index()
     default_in, default_out = _default_device_ids(wasapi_idx)

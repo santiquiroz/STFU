@@ -95,3 +95,55 @@ def test_set_parameter_routes_to_pipeline_for_active_target():
         ok = engine.set_parameter("feeder", 0, "strength", 0.7)
         assert ok is True
         created[0].pipeline.set_parameter.assert_called_once_with(0, "strength", 0.7)
+
+
+def test_current_devices_none_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.current_devices("feeder") is None
+
+
+def test_current_devices_returns_active_target_devices():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        assert engine.current_devices("feeder") == (1, 2)
+
+
+def test_restart_with_devices_noop_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.restart_with_devices("feeder", input_device_id=5) is None
+
+
+def test_restart_with_devices_swaps_input_and_stops_old_thread():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", input_device_id=5)
+        assert engine.current_devices("feeder") == (5, 2)
+        created[0].stop.assert_called_once()  # el viejo se paró
+        assert len(created) == 2
+        assert engine.active_targets() == ["feeder"]
+
+
+def test_restart_with_devices_swaps_output_only():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", output_device_id=9)
+        assert engine.current_devices("feeder") == (1, 9)
+
+
+def test_stop_clears_stored_config():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.stop("feeder")
+        assert engine.current_devices("feeder") is None
