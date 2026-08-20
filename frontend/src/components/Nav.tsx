@@ -1,11 +1,12 @@
 interface NavProps {
-  active: "control" | "modelos" | "sistema";
-  onChange: (tab: "control" | "modelos" | "sistema") => void;
+  active: "control" | "estudio" | "modelos" | "sistema";
+  onChange: (tab: "control" | "estudio" | "modelos" | "sistema") => void;
 }
 
 export function Nav({ active, onChange }: NavProps) {
   const tabs = [
     { id: "control", label: "Control" },
+    { id: "estudio", label: "Estudio" },
     { id: "modelos", label: "Modelos" },
     { id: "sistema", label: "Sistema" },
   ] as const;

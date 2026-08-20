@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Simple } from "./pages/Simple";
+import { Studio } from "./pages/Studio";
 import { Models } from "./pages/Models";
 import { System } from "./pages/System";
 import { Nav } from "./components/Nav";
@@ -8,9 +9,9 @@ import { Nav } from "./components/Nav";
 const queryClient = new QueryClient();
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"control" | "modelos" | "sistema">(
-    "control"
-  );
+  const [activeTab, setActiveTab] = useState<
+    "control" | "estudio" | "modelos" | "sistema"
+  >("control");
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -18,6 +19,7 @@ export default function App() {
         <Nav active={activeTab} onChange={setActiveTab} />
         <div className="flex-1">
           {activeTab === "control" && <Simple />}
+          {activeTab === "estudio" && <Studio />}
           {activeTab === "modelos" && <Models />}
           {activeTab === "sistema" && <System />}
         </div>
