@@ -2,47 +2,9 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
+import { useBypass } from "../hooks/useBypass";
 import { api } from "../services/api";
-import { Spinner, extractError, Badge } from "../components/ui";
-
-function Toggle({
-  on,
-  loading,
-  disabled,
-  onChange,
-}: {
-  on: boolean;
-  loading: boolean;
-  disabled?: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  const blocked = loading || disabled;
-  return (
-    <button
-      onClick={() => !blocked && onChange(!on)}
-      disabled={blocked}
-      className={`w-12 h-6 rounded-full transition-colors ${
-        loading
-          ? "bg-zinc-500 cursor-wait"
-          : disabled
-            ? "bg-zinc-700 cursor-not-allowed opacity-50"
-            : on
-              ? "bg-green-500"
-              : "bg-zinc-600"
-      }`}
-    >
-      {loading ? (
-        <Spinner />
-      ) : (
-        <div
-          className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${
-            on ? "translate-x-6" : ""
-          }`}
-        />
-      )}
-    </button>
-  );
-}
+import { extractError, Badge, Toggle, Button } from "../components/ui";
 
 export function Simple() {
   const queryClient = useQueryClient();
@@ -52,9 +14,11 @@ export function Simple() {
   const [selectedInput, setSelectedInput] = useState<number | undefined>(undefined);
   const [selectedTestOut, setSelectedTestOut] = useState<number | undefined>(undefined);
   const [micError, setMicError] = useState<string | null>(null);
+  const [musicMode, setMusicMode] = useState(false);
 
   const { data: devices = [] } = useDevices();
   const { data: status } = usePipelineStatus();
+  const bypassMutation = useBypass();
   const { data: feeder, isError: backendDown } = useQuery({
     queryKey: ["feeder-status"],
     queryFn: api.getFeederStatus,
@@ -63,7 +27,10 @@ export function Simple() {
 
   // Reconciliación con el estado real del backend
   useEffect(() => {
-    if (feeder && !micBusy) setMicOn(feeder.active);
+    if (feeder && !micBusy) {
+      setMicOn(feeder.active);
+      if (!feeder.active) setMusicMode(false);
+    }
   }, [feeder, micBusy]);
 
   const inputs = devices.filter((d) => d.channels_in > 0);
@@ -74,6 +41,7 @@ export function Simple() {
   const effectiveInput = selectedInput ?? inputs[0]?.id;
   const effectiveTestOut = selectedTestOut ?? outputs[0]?.id;
   const bridgePresent = feeder?.bridge_present ?? false;
+  const isBypassed = status?.streams?.feeder?.bypass ?? false;
 
   async function handleMicToggle(next: boolean) {
     setMicError(null);
@@ -89,11 +57,17 @@ export function Simple() {
     try {
       if (next) {
         // Con driver: sale al STFU Audio Bridge. Sin driver: modo prueba por parlantes.
-        await api.startFeeder(effectiveInput!, strength / 100, bridgePresent ? undefined : effectiveTestOut);
+        await api.startFeeder(
+          effectiveInput!,
+          [{ plugin_id: "deepfilternet3", parameters: { strength: strength / 100 } }],
+          bridgePresent ? undefined : effectiveTestOut,
+        );
         setMicOn(true);
+        setMusicMode(false);
       } else {
         await api.stopFeeder();
         setMicOn(false);
+        setMusicMode(false);
       }
       // Refresca el estado real sin esperar al poll de 2s.
       queryClient.invalidateQueries({ queryKey: ["feeder-status"] });
@@ -113,6 +87,66 @@ export function Simple() {
       setMicError(extractError(e));
     }
   }
+
+  async function toggleBypass() {
+    try {
+      await bypassMutation.mutateAsync(!isBypassed);
+    } catch (e) {
+      setMicError(extractError(e));
+    }
+  }
+
+  async function handleMusicMode() {
+    setMicError(null);
+    if (effectiveInput === undefined) {
+      setMicError("No se detectó ningún micrófono.");
+      return;
+    }
+    if (!bridgePresent && effectiveTestOut === undefined) {
+      setMicError("No hay dispositivo de salida para la prueba.");
+      return;
+    }
+    setMicBusy(true);
+    try {
+      const preset = await api.getPreset("Música");
+      await api.startFeeder(
+        effectiveInput,
+        preset.plugins,
+        bridgePresent ? undefined : effectiveTestOut,
+      );
+      setMicOn(true);
+      setMusicMode(true);
+      const s = preset.plugins[0]?.parameters?.strength;
+      if (typeof s === "number") setStrength(Math.round(s * 100));
+      queryClient.invalidateQueries({ queryKey: ["feeder-status"] });
+      queryClient.invalidateQueries({ queryKey: ["status"] });
+    } catch (e) {
+      setMicError(extractError(e));
+    } finally {
+      setMicBusy(false);
+    }
+  }
+
+  function isTypingTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    return ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+  }
+
+  useEffect(() => {
+    if (!micOn) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.code !== "Space" || e.repeat) return;
+      if (isTypingTarget(document.activeElement)) return;
+      if (bypassMutation.isPending) return;
+      e.preventDefault();
+      toggleBypass();
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [micOn, isBypassed, bypassMutation.isPending]);
 
   const latency = status?.latency_ms ?? 0;
 
@@ -184,6 +218,39 @@ export function Simple() {
           />
         </div>
 
+        {micOn && (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-zinc-400">A/B — Original ⇄ Limpio</p>
+              <p className="text-[10px] text-zinc-600">barra espaciadora</p>
+            </div>
+            <div className="flex rounded-lg overflow-hidden border border-zinc-700">
+              <button
+                onClick={() => !isBypassed && toggleBypass()}
+                disabled={bypassMutation.isPending}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isBypassed
+                    ? "bg-amber-600 text-white"
+                    : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                }`}
+              >
+                Original
+              </button>
+              <button
+                onClick={() => isBypassed && toggleBypass()}
+                disabled={bypassMutation.isPending}
+                className={`flex-1 px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  !isBypassed
+                    ? "bg-green-600 text-white"
+                    : "bg-zinc-700 text-zinc-400 hover:bg-zinc-600"
+                }`}
+              >
+                Limpio
+              </button>
+            </div>
+          </div>
+        )}
+
         {!bridgePresent && !backendDown && (
           <div>
             <p className="text-xs text-zinc-400 mb-1">Escuchar prueba en:</p>
@@ -207,6 +274,17 @@ export function Simple() {
             : "Modo prueba sin driver: capturamos tu mic, quitamos el ruido y lo reproducimos por la salida elegida para que oigas el resultado."}
         </p>
       </div>
+
+      {/* Modo música */}
+      <Button
+        variant={musicMode ? "primary" : "ghost"}
+        onClick={handleMusicMode}
+        disabled={micBusy || effectiveInput === undefined}
+        className="w-full flex items-center justify-center gap-2"
+      >
+        🎵 Modo música
+        {musicMode && <Badge label="activo" tone="green" />}
+      </Button>
 
       <div className="flex flex-col items-center gap-2">
         <p className="text-center text-zinc-600 text-xs">
