@@ -212,24 +212,71 @@ class AudioEngine:
 
     def swap_model(self, target: str, model_id: str, device: str = "auto") -> bool:
         """Activa un modelo NC en el pipeline vivo. El plugin se construye y
-        warmupea (sesión ONNX creada) en este hilo; el worker hace el swap
-        entre chunks — sin cortar el stream."""
+        warmupea (sesión ONNX creada) en este hilo — SIEMPRE fuera del lock,
+        igual que insert_plugin/remove_plugin, para no bloquear otros
+        targets durante la apertura de sesión. El staging hacia el worker
+        (request_plugin_swap) y la escritura a _configs corren en un ÚNICO
+        bloque bajo lock: si no, restart_with_devices reconstruye el
+        pipeline desde el modelo con el que `target` arrancó y revierte en
+        silencio un swap en vivo (o un downgrade del DegradeMonitor bajo
+        presión de CPU) en el próximo restart por cambio de default device.
+        El índice se busca en _configs[target].plugin_configs — no en
+        thread.pipeline._plugins, que el worker actualiza de forma asíncrona
+        y puede ir un chunk atrás (mismo criterio que insert_plugin) — y
+        preserva "parameters" (p.ej. strength) del plugin reemplazado. Antes
+        de construir nada se descarta rápido el caso target-inactivo (bajo
+        lock, sin tocar build_pipeline): evita levantar el modelo — I/O real
+        de sesión ONNX, o un ValueError si model_id no existe — para un
+        target que ni siquiera está corriendo. El bloque final vuelve a leer
+        thread/config frescos (nunca los del check inicial): si el target se
+        paró mientras el modelo se construía/warmupeaba, este swap se
+        descarta sin registrarse, mismo criterio anti-TOCTOU que start()."""
         from stfu.core.pipeline_factory import build_pipeline
-        from stfu.plugins.onnx_streaming import OnnxStreamingPlugin
+        with self._lock:
+            if target not in self._threads:
+                return False
+        plugin_id = f"model:{model_id}"
+        staged = build_pipeline([{"plugin_id": plugin_id}], device=device)
+        plugin = staged._plugins[0]
+        plugin.setup(plugin.preferred_format)  # warmup: nunca en el worker, nunca bajo lock
         with self._lock:
             thread = self._threads.get(target)
-        if thread is None:
-            return False
-        index = next(
-            (i for i, p in enumerate(thread.pipeline._plugins)
-             if isinstance(p, OnnxStreamingPlugin)),
+            if thread is None:
+                return False
+            config = self._configs.get(target)
+            index = self._model_plugin_index(config)
+            thread.request_plugin_swap(index, plugin)
+            self._write_swapped_model_config(config, index, plugin_id)
+        return True
+
+    def _model_plugin_index(self, config: dict | None) -> int:
+        """Índice del plugin de modelo/NC en la cadena lógica de `config`
+        (plugin_id con prefijo "model:"). Por convención el modelo vive en
+        index 0 (ver runtime_state, que lee plugin_configs[0] como el slot
+        de strength) — ese mismo 0 es el fallback si no hay config
+        registrada todavía o ningún plugin de modelo activo en la cadena."""
+        if config is None:
+            return 0
+        plugins_cfg = config.get("plugin_configs") or []
+        return next(
+            (i for i, cfg in enumerate(plugins_cfg)
+             if cfg.get("plugin_id", "").startswith("model:")),
             0,
         )
-        staged = build_pipeline([{"plugin_id": f"model:{model_id}"}], device=device)
-        plugin = staged._plugins[0]
-        plugin.setup(plugin.preferred_format)  # warmup: crea la sesión acá, no en el worker
-        thread.request_plugin_swap(index, plugin)
-        return True
+
+    def _write_swapped_model_config(self, config: dict | None, index: int, plugin_id: str) -> None:
+        """Escribe el nuevo plugin_id en _configs preservando "parameters"
+        del slot reemplazado (p.ej. strength seteado por el usuario antes
+        del swap). No-op si no hay config registrada o el índice no entra
+        en la cadena — degrada sin romper el swap ya encolado en el worker,
+        nunca lanza IndexError."""
+        if config is None:
+            return
+        plugins_cfg = config.get("plugin_configs")
+        if plugins_cfg is None or not 0 <= index < len(plugins_cfg):
+            return
+        parameters = plugins_cfg[index].get("parameters", {})
+        plugins_cfg[index] = {"plugin_id": plugin_id, "parameters": dict(parameters)}
 
     def insert_plugin(
         self, target: str, index: int, plugin_config: dict, device: str = "auto",
