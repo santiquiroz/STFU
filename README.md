@@ -30,11 +30,13 @@ STFU gives you:
 
 ## Status
 
-### Working today (v1.5-dev)
+### Working today (v1.7 — Voice Studio)
 - [x] Mic noise cancellation — WASAPI monitor path + **STFU APO** (C++ COM DLL running inside `audiodg.exe`), bridge to the Python engine verified end-to-end
 - [x] **ONNX Runtime inference** with streaming state (real frame-by-frame context, no offline-API hacks)
 - [x] **Any-device runtime**: `auto | cpu | gpu` selection with a probe + explicit fallback (NaN-guarded); NPU (`npu`) scaffolded for the runtime-pack work
-- [x] **Model hub**: curated catalog, on-demand download from Hugging Face / GitHub Releases with mandatory SHA-256 verification, safe delete, and **live model swap** (no stream restart)
+- [x] **Model hub with UI**: curated catalog, browse/download/activate/delete straight from the app, verified SHA-256, and **live model swap** (no stream restart)
+- [x] **Voice Studio** (tab "Estudio"): visual DSP chain editor, live spectrum visualizer, dB reduction meter, scene presets (Gaming / Reunión / Streaming / Podcast / Música / Accesibilidad), A/B bypass (spacebar), and Music Mode
+- [x] **APO auto-repair**: health-check + automatic repair of the APO registration — recovers from Windows 11 24H2 cumulative updates deactivating the APO, and from ghost endpoints, without manual re-registration
 - [x] **Anti-overload auto-degrade**: drops to a lighter tier under sustained pressure, never disables NC
 - [x] Format-proof audio engine: WASAPI auto-convert (any device rate), stateful resampling (soxr), clock-drift servo between devices
 - [x] Per-stage telemetry (EMA + p95 latency per plugin) on `/status` and `/ws/metering`
@@ -42,11 +44,14 @@ STFU gives you:
 - [x] System tray app (Tauri) that spawns/supervises the backend; NSIS installer; rotating file logs at every layer
 
 ### In progress / next
-- [ ] NPU runtime packs (Qualcomm QNN / Intel OpenVINO) + migration path to Windows ML
-- [ ] APO hardening for Windows 11 24H2 (auto-heal after cumulative updates deactivate the APO; tolerate ghost endpoints)
-- [ ] Model-hub UI (browse/download/activate) and per-stage telemetry UI
-- [ ] Larger curated lineup once a spectrogram front-end lands (unlocks GTCRN / DPDFNet-class models)
-- [ ] `STFU Microphone` virtual device (v2 — per-app routing; requires an EV-signed kernel driver)
+- [ ] Larger curated model lineup once a spectrogram (STFT) front-end lands — quality tier, 48kHz, unlocks GTCRN / DPDFNet-class models
+- [ ] Monitor Mode
+- [ ] Studio Voice
+- [ ] Live captions
+- [ ] Per-app capture
+- [ ] Community model hub
+- [ ] NPU runtime packs (Qualcomm QNN / Intel OpenVINO) — deferred, no compatible model yet
+- [ ] `STFU Microphone` virtual device (v2 — per-app routing, requires an EV-signed kernel driver) — **paused** by explicit decision; compiled and test-signed, never installed on a real machine
 
 ---
 
@@ -86,7 +91,7 @@ Current curated lineup (real, waveform-in / waveform-out, verified end-to-end):
 - Inference runs in a **worker thread**, never in the real-time audio callback. The model keeps recurrent state across chunks for true streaming context.
 - If the STFU service isn't running, the APO passes audio through untouched — your audio never breaks. If a model produces a bad frame (NaN), that frame falls back to dry audio instead of reaching your speakers.
 
-Known limits of the APO tier (accepted, documented): exclusive-mode/ASIO apps bypass APOs; unsigned APOs require `DisableProtectedAudioDG=1` (same as Equalizer APO); reinstalling an audio driver wipes the registration (re-register from the UI). Windows 11 24H2 can silently deactivate APOs after a cumulative update — auto-heal for this is on the roadmap.
+Known limits of the APO tier (accepted, documented): exclusive-mode/ASIO apps bypass APOs; unsigned APOs require `DisableProtectedAudioDG=1` (same as Equalizer APO); reinstalling an audio driver wipes the registration. Windows 11 24H2 can silently deactivate APOs after a cumulative update — STFU's health-check detects this and **auto-repairs the registration** (`POST /apo/repair`), no manual re-registration needed.
 
 ---
 
