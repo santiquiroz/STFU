@@ -30,7 +30,7 @@ function deriveActiveModelId(streams: Record<string, StreamStats> | undefined): 
 export function Models() {
   const { data: models, isLoading, isError, error } = useModels();
   const { data: status } = usePipelineStatus();
-  const downloadMutation = useDownloadModel();
+  const { download, state: downloadState } = useDownloadModel();
   const activateMutation = useActivateModel();
   const deleteMutation = useDeleteModel();
   // Fallback optimista para la breve ventana entre activar y el próximo
@@ -81,16 +81,13 @@ export function Models() {
               model={model}
               active={activeModelId === model.id}
               activeTarget={activeTarget}
-              downloading={downloadMutation.isPending && downloadMutation.variables === model.id}
+              downloading={downloadState?.modelId === model.id}
+              downloadProgress={downloadState?.modelId === model.id ? downloadState.progress : null}
               activating={
                 activateMutation.isPending && activateMutation.variables?.id === model.id
               }
               deleting={deleteMutation.isPending && deleteMutation.variables === model.id}
-              downloadError={
-                downloadMutation.isError && downloadMutation.variables === model.id
-                  ? extractError(downloadMutation.error)
-                  : null
-              }
+              downloadError={downloadState?.modelId === model.id ? downloadState.error : null}
               activateError={
                 activateMutation.isError && activateMutation.variables?.id === model.id
                   ? extractError(activateMutation.error)
@@ -101,7 +98,7 @@ export function Models() {
                   ? extractError(deleteMutation.error)
                   : null
               }
-              onDownload={() => downloadMutation.mutate(model.id)}
+              onDownload={() => download(model.id)}
               onActivate={(target, device) => handleActivate(model.id, target, device)}
               onDelete={() => deleteMutation.mutate(model.id)}
             />

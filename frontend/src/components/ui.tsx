@@ -4,6 +4,21 @@ export function Spinner() {
   );
 }
 
+export function ProgressBar({ pct }: { pct: number | null }) {
+  const determinate = pct !== null;
+  const clamped = determinate ? Math.min(100, Math.max(0, pct)) : 0;
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-700">
+      <div
+        className={`h-full rounded-full bg-green-500 transition-[width] duration-200 ${
+          determinate ? "" : "w-1/3 animate-pulse"
+        }`}
+        style={determinate ? { width: `${clamped}%` } : undefined}
+      />
+    </div>
+  );
+}
+
 export function extractError(e: unknown): string {
   if (e && typeof e === "object" && "response" in e) {
     const resp = (e as { response?: { data?: { detail?: string } } }).response;

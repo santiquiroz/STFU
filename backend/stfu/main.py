@@ -12,8 +12,9 @@ from stfu.api.routes.apo import router as apo_router
 from stfu.api.routes.feeder import router as feeder_router
 from stfu.api.routes.plugins import router as plugins_router
 from stfu.api.routes.presets import router as presets_router
-from stfu.api.ws import metering_ws
+from stfu.api.ws import download_progress_ws, metering_ws
 from stfu.audio.engine import engine
+from stfu.hub.download_jobs import download_jobs
 
 
 @asynccontextmanager
@@ -84,3 +85,15 @@ def status():
 @app.websocket("/ws/metering")
 async def ws_metering(websocket: WebSocket):
     await metering_ws(websocket, _status_payload)
+
+
+def _download_job_payload(job_id: str) -> dict:
+    job = download_jobs.get(job_id)
+    if job is None:
+        return {"status": "error", "downloaded": 0, "total": None, "pct": None, "error": "job no encontrado"}
+    return job.to_payload()
+
+
+@app.websocket("/ws/download/{job_id}")
+async def ws_download_progress(websocket: WebSocket, job_id: str):
+    await download_progress_ws(websocket, lambda: _download_job_payload(job_id))

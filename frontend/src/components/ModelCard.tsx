@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
-import type { ModelInfo } from "../services/api";
-import { Badge, Card, Spinner, TierBadge } from "./ui";
+import type { DownloadProgress, ModelInfo } from "../services/api";
+import { Badge, Card, ProgressBar, Spinner, TierBadge } from "./ui";
 
 interface ModelCardProps {
   model: ModelInfo;
   active: boolean;
   activeTarget: string | null;
   downloading: boolean;
+  downloadProgress?: DownloadProgress | null;
   activating: boolean;
   deleting: boolean;
   downloadError?: string | null;
@@ -50,6 +51,24 @@ function ActiveIndicator() {
       <span className="h-1.5 w-1.5 rounded-full bg-green-400 animate-pulse" />
       Activo
     </span>
+  );
+}
+
+function formatMb(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(1);
+}
+
+function DownloadProgressIndicator({ progress }: { progress: DownloadProgress }) {
+  const { downloaded, total, pct } = progress;
+  return (
+    <div className="flex flex-col gap-1">
+      <ProgressBar pct={pct} />
+      <p className="text-[11px] text-zinc-500">
+        {total
+          ? `${formatMb(downloaded)} MB / ${formatMb(total)} MB`
+          : `${formatMb(downloaded)} MB descargados`}
+      </p>
+    </div>
   );
 }
 
@@ -126,6 +145,7 @@ export function ModelCard({
   active,
   activeTarget,
   downloading,
+  downloadProgress,
   activating,
   deleting,
   downloadError,
@@ -187,8 +207,11 @@ export function ModelCard({
         {!model.installed ? (
           <>
             <button onClick={onDownload} disabled={downloading} className={primaryButtonClasses}>
-              {downloading ? <Spinner /> : "Descargar"}
+              {downloading ? (downloadProgress ? "Descargando…" : <Spinner />) : "Descargar"}
             </button>
+            {downloading && downloadProgress && (
+              <DownloadProgressIndicator progress={downloadProgress} />
+            )}
             {downloadError && <ErrorText message={downloadError} />}
           </>
         ) : (

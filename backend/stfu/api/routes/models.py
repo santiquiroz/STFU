@@ -2,7 +2,8 @@ import sys
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from stfu.core.pipeline_factory import default_registry
-from stfu.hub.manager import HubManager, Sha256Mismatch
+from stfu.hub.download_jobs import start_download_job
+from stfu.hub.manager import HubManager
 
 router = APIRouter()
 
@@ -31,15 +32,13 @@ def list_models():
     return _hub().catalog()
 
 
-@router.post("/models/{model_id}/download")
+@router.post("/models/{model_id}/download", status_code=202)
 def download_model(model_id: str):
-    try:
-        path = _hub().download(model_id)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Sha256Mismatch as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    return {"installed": True, "path": str(path)}
+    hub = _hub()
+    if not hub.is_curated(model_id):
+        raise HTTPException(status_code=404, detail=f"modelo {model_id!r} no está en el catálogo")
+    job_id = start_download_job(hub, model_id)
+    return {"job_id": job_id}
 
 
 @router.delete("/models/{model_id}")
