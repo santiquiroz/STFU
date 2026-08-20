@@ -97,6 +97,41 @@ def test_tick_only_restarts_targets_that_were_on_the_old_default():
     assert engine.restarts == [("mic", {"input_device_id": 5})]
 
 
+def test_tick_restarts_target_exactly_once_on_combo_default_change():
+    """Combo headset: input Y output default cambian en el MISMO tick. Debe
+    ser UN solo restart_with_devices con ambos ids, no dos restarts
+    secuenciales (cada restart es un ciclo de cierre/apertura de device)."""
+    engine = _FakeEngine({"mic": (1, 2)})
+    provider = _FakeDefaultProvider((1, 2))
+    watcher = DefaultDeviceWatcher(engine=engine, default_provider=provider)
+    watcher.tick()  # baseline
+    provider.value = (5, 9)  # headset combo desconectado -> cambian ambos
+    watcher.tick()
+    assert engine.restarts == [("mic", {"input_device_id": 5, "output_device_id": 9})]
+    assert engine.current_devices("mic") == (5, 9)
+
+
+def test_tick_combo_change_only_restarts_each_affected_target_once():
+    engine = _FakeEngine({
+        "both": (1, 2),       # sigue input Y output default
+        "in_only": (1, 77),   # input default, output elegido a mano
+        "out_only": (55, 2),  # input elegido a mano, output default
+    })
+    provider = _FakeDefaultProvider((1, 2))
+    watcher = DefaultDeviceWatcher(engine=engine, default_provider=provider)
+    watcher.tick()  # baseline
+    provider.value = (5, 9)
+    watcher.tick()
+    assert engine.restarts == [
+        ("both", {"input_device_id": 5, "output_device_id": 9}),
+        ("in_only", {"input_device_id": 5}),
+        ("out_only", {"output_device_id": 9}),
+    ]
+    # exactamente un restart por target afectado
+    restarted_targets = [t for t, _ in engine.restarts]
+    assert len(restarted_targets) == len(set(restarted_targets)) == 3
+
+
 def test_tick_handles_provider_error_without_raising():
     engine = _FakeEngine({"mic": (1, 2)})
 

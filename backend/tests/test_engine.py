@@ -147,3 +147,47 @@ def test_stop_clears_stored_config():
         engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
         engine.stop("feeder")
         assert engine.current_devices("feeder") is None
+
+
+def test_restart_with_devices_swaps_both_input_and_output_in_one_call():
+    """Cubre el caso combo-headset: input+output cambian en un solo restart,
+    no en dos llamadas separadas (ver device_watcher.tick())."""
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        engine.restart_with_devices("feeder", input_device_id=5, output_device_id=9)
+        assert engine.current_devices("feeder") == (5, 9)
+        assert len(created) == 2  # un solo thread nuevo, no dos
+
+
+def test_restart_with_devices_aborts_if_target_stopped_during_reopen():
+    """TOCTOU: si engine.stop(target) llega MIENTRAS restart_with_devices
+    todavía está abriendo el device nuevo (thread.start() es I/O bloqueante
+    en la vida real), el stop del usuario debe ganar -- el target queda
+    detenido, el thread recién abierto se descarta sin registrarse."""
+    created = []
+    engine = AudioEngine()
+
+    def factory(**kwargs):
+        m = MagicMock(name=f"CaptureThread{len(created)}")
+        m.pipeline = MagicMock()
+        if len(created) == 1:
+            # El 2do thread es el que abre restart_with_devices: su start()
+            # dispara el stop() concurrente del usuario, simulando que llega
+            # justo mientras el device nuevo todavía se estaba abriendo.
+            m.start.side_effect = lambda: engine.stop("feeder")
+        created.append(m)
+        return m
+
+    with patch("stfu.audio.engine.CaptureThread", side_effect=factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine.start("feeder", input_device_id=1, output_device_id=2, plugin_configs=[])
+        result = engine.restart_with_devices("feeder", input_device_id=5)
+
+    assert result is None  # el restart se descartó, no se registró
+    assert engine.active_targets() == []  # el stop() del usuario gana: sigue detenido
+    assert engine.current_devices("feeder") is None
+    created[0].stop.assert_called_once()  # lo paró el stop() del usuario
+    created[1].stop.assert_called_once()  # el device nuevo se descarta sin registrar

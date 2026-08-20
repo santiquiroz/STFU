@@ -25,6 +25,13 @@ class AudioEngine:
         # cuando cambia el default device, sin que el caller tenga que
         # reenviarla (ver restart_with_devices / DefaultDeviceWatcher).
         self._configs: dict[str, dict] = {}
+        # Incrementa en cada registro/baja EFECTIVO de un target (nunca se
+        # borra, sobrevive a un stop). Un restart_with_devices lee el epoch
+        # antes de abrir el device nuevo (I/O bloqueante y lento); si al
+        # llegar a comitear el epoch ya cambió, algo más reciente (un stop
+        # del usuario, u otro start) ganó la carrera y el restart se
+        # descarta sin registrarse — ver start(expected_epoch=...).
+        self._epochs: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def start(
@@ -33,7 +40,9 @@ class AudioEngine:
         input_device_id: int,
         output_device_id: int,
         plugin_configs: list[dict],
-    ) -> float:
+        *,
+        expected_epoch: int | None = None,
+    ) -> float | None:
         # La apertura de dispositivo (thread.start()) es I/O bloqueante y queda
         # FUERA del lock para no congelar stats/stop/active_targets. El lock solo
         # cubre el swap del registro. Invariante anti-huérfano: se registra el
@@ -49,14 +58,27 @@ class AudioEngine:
             out_channels=out_ch,
         )
         thread.start()
+        discard = None
         with self._lock:
-            old = self._threads.get(target)
-            self._threads[target] = thread
-            self._configs[target] = {
-                "input_device_id": input_device_id,
-                "output_device_id": output_device_id,
-                "plugin_configs": plugin_configs,
-            }
+            if expected_epoch is not None and self._epochs.get(target, 0) != expected_epoch:
+                # TOCTOU: algo cambió el estado de `target` mientras este
+                # thread abría el device nuevo. Ese cambio más reciente gana:
+                # el thread recién abierto se descarta SIN registrarse (nunca
+                # queda huérfano ni resucita un target que el usuario paró).
+                discard = thread
+                old = None
+            else:
+                old = self._threads.get(target)
+                self._threads[target] = thread
+                self._configs[target] = {
+                    "input_device_id": input_device_id,
+                    "output_device_id": output_device_id,
+                    "plugin_configs": plugin_configs,
+                }
+                self._epochs[target] = self._epochs.get(target, 0) + 1
+        if discard is not None:
+            discard.stop()
+            return None
         if old:
             old.stop()
         return pipeline.total_latency_ms()
@@ -65,15 +87,19 @@ class AudioEngine:
         with self._lock:
             thread = self._threads.pop(target, None)
             self._configs.pop(target, None)
+            if thread is not None:
+                self._epochs[target] = self._epochs.get(target, 0) + 1
         if thread:
             thread.stop()
 
     def stop_all(self) -> None:
         with self._lock:
-            threads = list(self._threads.values())
+            threads = dict(self._threads)
             self._threads.clear()
             self._configs.clear()
-        for t in threads:
+            for target in threads:
+                self._epochs[target] = self._epochs.get(target, 0) + 1
+        for t in threads.values():
             t.stop()
 
     def current_devices(self, target: str) -> tuple[int, int] | None:
@@ -93,9 +119,14 @@ class AudioEngine:
     ) -> float | None:
         """Reinicia `target` con la MISMA plugin chain, reemplazando el/los
         device id(s) dados. Reusa start(), así que hereda la invariante
-        anti-huérfano. None si el target no está activo (nada que reiniciar)."""
+        anti-huérfano MÁS la guarda anti-TOCTOU (expected_epoch): si un
+        stop()/start() del usuario llega mientras el device nuevo se estaba
+        abriendo, ese cambio gana y este restart se descarta sin registrarse.
+        None si el target no está activo (nada que reiniciar) o si perdió
+        la carrera contra un cambio más reciente."""
         with self._lock:
             config = self._configs.get(target)
+            epoch = self._epochs.get(target)
         if config is None:
             return None
         new_input = input_device_id if input_device_id is not None else config["input_device_id"]
@@ -105,6 +136,7 @@ class AudioEngine:
             input_device_id=new_input,
             output_device_id=new_output,
             plugin_configs=config["plugin_configs"],
+            expected_epoch=epoch,
         )
 
     def get_latency_ms(self) -> float:

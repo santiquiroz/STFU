@@ -55,7 +55,13 @@ class DefaultDeviceWatcher:
 
     def tick(self) -> None:
         """Un ciclo de detección + reinicio. Público para testear sin thread
-        ni sleep: el test llama tick() directamente tras flipear el provider."""
+        ni sleep: el test llama tick() directamente tras flipear el provider.
+
+        Un combo headset cambia input Y output default en el MISMO tick: se
+        calcula el par (nuevo input, nuevo output) por target una sola vez y
+        se emite UN solo restart_with_devices por target afectado, nunca dos
+        (dos restarts secuenciales = dos ciclos de cierre/apertura de
+        dispositivo = dos glitches de audio por el mismo evento)."""
         new_defaults = self._safe_defaults()
         old_defaults = self._last_defaults
         self._last_defaults = new_defaults
@@ -63,44 +69,48 @@ class DefaultDeviceWatcher:
             return
         old_in, old_out = old_defaults
         new_in, new_out = new_defaults
-        if new_in != old_in:
-            self._restart_targets_on_old_default("input", old_in, new_in)
-        if new_out != old_out:
-            self._restart_targets_on_old_default("output", old_out, new_out)
-
-    def _restart_targets_on_old_default(
-        self, direction: str, old_id: int | None, new_id: int | None
-    ) -> None:
-        if old_id is None or new_id is None:
+        input_changed = new_in != old_in and old_in is not None and new_in is not None
+        output_changed = new_out != old_out and old_out is not None and new_out is not None
+        if not input_changed and not output_changed:
             return
         for target in self._engine.active_targets():
-            if self._target_was_on_device(target, direction, old_id):
-                self._restart_target(target, direction, new_id)
+            self._restart_target_if_affected(
+                target, old_in, new_in, old_out, new_out, input_changed, output_changed,
+            )
 
-    def _target_was_on_device(self, target: str, direction: str, device_id: int) -> bool:
+    def _restart_target_if_affected(
+        self,
+        target: str,
+        old_in: int | None,
+        new_in: int | None,
+        old_out: int | None,
+        new_out: int | None,
+        input_changed: bool,
+        output_changed: bool,
+    ) -> None:
         # Solo sigue streams que estaban EXACTAMENTE en el default viejo: un
         # device explícito elegido por el usuario no se toca aunque coincida
         # con el default de otra dirección, ni se hijackea si nunca fue el
         # default (nunca lo comparamos contra nada más que old_defaults).
         devices = self._engine.current_devices(target)
         if devices is None:
-            return False
-        input_id, output_id = devices
-        current_id = input_id if direction == "input" else output_id
-        return current_id == device_id
+            return
+        current_in, current_out = devices
+        kwargs = {}
+        if input_changed and current_in == old_in:
+            kwargs["input_device_id"] = new_in
+        if output_changed and current_out == old_out:
+            kwargs["output_device_id"] = new_out
+        if not kwargs:
+            return
+        self._restart_target(target, kwargs)
 
-    def _restart_target(self, target: str, direction: str, new_id: int) -> None:
-        kwargs = {"input_device_id": new_id} if direction == "input" else {"output_device_id": new_id}
+    def _restart_target(self, target: str, kwargs: dict) -> None:
         try:
             self._engine.restart_with_devices(target, **kwargs)
-            _log.info(
-                "target '%s' reiniciado: default de %s cambió a device %s",
-                target, direction, new_id,
-            )
+            _log.info("target '%s' reiniciado: default cambió (%s)", target, kwargs)
         except Exception:
-            _log.exception(
-                "fallo al reiniciar target '%s' tras cambio de default (%s)", target, direction
-            )
+            _log.exception("fallo al reiniciar target '%s' tras cambio de default", target)
 
     def _loop(self) -> None:
         while not self._stop_event.wait(self._poll_interval_s):
