@@ -35,6 +35,7 @@ def _feeder_playback_active() -> bool:
 def feeder_status():
     bridge = find_bridge_output()
     active = _TARGET in engine.active_targets()
+    runtime = engine.runtime_state(_TARGET) if active else None
     return {
         "bridge_present": bridge is not None,
         "bridge_name": BRIDGE_RENDER_NAME,
@@ -43,6 +44,10 @@ def feeder_status():
         # Distingue 'activo' de 'activo y saliendo audio': si el output stream
         # falló al abrir, el thread sigue registrado pero descarta el audio.
         "playback_active": _feeder_playback_active() if active else False,
+        # Permite al frontend reconciliar slider/picker tras un reload o un
+        # arranque out-of-session (otro cliente, o el DefaultDeviceWatcher).
+        "strength": runtime["strength"] if runtime else None,
+        "input_device_id": runtime["input_device_id"] if runtime else None,
     }
 
 

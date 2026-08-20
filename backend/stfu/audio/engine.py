@@ -111,6 +111,25 @@ class AudioEngine:
             return None
         return config["input_device_id"], config["output_device_id"]
 
+    def runtime_state(self, target: str) -> dict | None:
+        """input_device_id y strength (parámetro del plugin NC en index 0)
+        con los que corre `target` ahora mismo, o None si no está activo.
+        strength es None si el plugin en index 0 no tiene ese parámetro
+        (p.ej. una cadena sin modelo NC)."""
+        with self._lock:
+            config = self._configs.get(target)
+        if config is None:
+            return None
+        plugin_configs = config["plugin_configs"]
+        strength = None
+        if plugin_configs:
+            parameters = plugin_configs[0].get("parameters") or {}
+            strength = parameters.get("strength")
+        return {
+            "input_device_id": config["input_device_id"],
+            "strength": strength,
+        }
+
     def restart_with_devices(
         self,
         target: str,

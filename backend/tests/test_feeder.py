@@ -151,3 +151,25 @@ def test_status_includes_playback_active():
         r = client.get("/feeder/status")
     assert r.status_code == 200
     assert "playback_active" in r.json()
+
+
+def test_status_reports_strength_and_input_when_active():
+    with patch("stfu.api.routes.feeder.find_bridge_output", return_value=None), \
+         patch("stfu.api.routes.feeder.engine.active_targets", return_value=["feeder"]), \
+         patch(
+             "stfu.api.routes.feeder.engine.runtime_state",
+             return_value={"input_device_id": 3, "strength": 0.7},
+         ):
+        r = client.get("/feeder/status")
+    body = r.json()
+    assert body["strength"] == 0.7
+    assert body["input_device_id"] == 3
+
+
+def test_status_reports_null_strength_and_input_when_inactive():
+    with patch("stfu.api.routes.feeder.find_bridge_output", return_value=None), \
+         patch("stfu.api.routes.feeder.engine.active_targets", return_value=[]):
+        r = client.get("/feeder/status")
+    body = r.json()
+    assert body["strength"] is None
+    assert body["input_device_id"] is None

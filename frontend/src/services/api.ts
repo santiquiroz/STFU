@@ -155,6 +155,9 @@ export const api = {
     bridge_name: string;
     bridge_device_id: number | null;
     active: boolean;
+    playback_active: boolean;
+    strength: number | null;
+    input_device_id: number | null;
   }> => client.get("/feeder/status").then((r) => r.data),
 
   startFeeder: (

@@ -111,6 +111,44 @@ def test_current_devices_returns_active_target_devices():
         assert engine.current_devices("feeder") == (1, 2)
 
 
+def test_runtime_state_none_for_inactive_target():
+    engine = AudioEngine()
+    assert engine.runtime_state("feeder") is None
+
+
+def test_runtime_state_returns_input_and_strength():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=3, output_device_id=2,
+            plugin_configs=[{"plugin_id": "deepfilternet3", "parameters": {"strength": 0.7}}],
+        )
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": 0.7}
+
+
+def test_runtime_state_strength_none_when_plugin_lacks_parameter():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=3, output_device_id=2,
+            plugin_configs=[{"plugin_id": "gain", "parameters": {}}],
+        )
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": None}
+
+
+def test_runtime_state_strength_none_when_no_plugins():
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start("feeder", input_device_id=3, output_device_id=2, plugin_configs=[])
+        assert engine.runtime_state("feeder") == {"input_device_id": 3, "strength": None}
+
+
 def test_restart_with_devices_noop_for_inactive_target():
     engine = AudioEngine()
     assert engine.restart_with_devices("feeder", input_device_id=5) is None
