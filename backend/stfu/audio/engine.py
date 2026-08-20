@@ -186,10 +186,19 @@ class AudioEngine:
         return {target: t.stats for target, t in threads.items()}
 
     def set_parameter(self, target: str, plugin_index: int, param_id: str, value) -> bool:
+        # Escribe también en _configs (no solo en el pipeline vivo): si no,
+        # runtime_state()/restart_with_devices() siguen leyendo el valor de
+        # arranque para siempre — un cambio de slider quedaría "fantasma"
+        # tras un reload o un restart por cambio de default device.
         with self._lock:
             thread = self._threads.get(target)
-        if thread is None:
-            return False
+            if thread is None:
+                return False
+            config = self._configs.get(target)
+            if config is not None:
+                plugins = config.get("plugin_configs") or []
+                if 0 <= plugin_index < len(plugins):
+                    plugins[plugin_index].setdefault("parameters", {})[param_id] = value
         thread.pipeline.set_parameter(plugin_index, param_id, value)
         return True
 

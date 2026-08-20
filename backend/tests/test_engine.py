@@ -97,6 +97,29 @@ def test_set_parameter_routes_to_pipeline_for_active_target():
         created[0].pipeline.set_parameter.assert_called_once_with(0, "strength", 0.7)
 
 
+def test_set_parameter_writes_through_to_stored_config():
+    """Regresión: set_parameter solo mutaba el pipeline vivo, nunca
+    self._configs. runtime_state() (y restart_with_devices, que reusa
+    plugin_configs) seguían reportando el strength de arranque para
+    siempre — un cambio de slider quedaba fantasma tras un reload o un
+    restart por cambio de default device."""
+    factory, created = _mock_capture_thread()
+    with patch("stfu.audio.engine.CaptureThread", factory), \
+         patch("stfu.audio.engine._out_channels_for_device", return_value=2):
+        engine = AudioEngine()
+        engine.start(
+            "feeder", input_device_id=1, output_device_id=2,
+            plugin_configs=[{"plugin_id": "deepfilternet3", "parameters": {"strength": 0.85}}],
+        )
+        ok = engine.set_parameter("feeder", 0, "strength", 0.30)
+        assert ok is True
+        assert engine.runtime_state("feeder") == {"input_device_id": 1, "strength": 0.30}
+
+        # restart_with_devices reusa plugin_configs: el valor nuevo, no el de arranque.
+        engine.restart_with_devices("feeder", input_device_id=5)
+        assert engine.runtime_state("feeder") == {"input_device_id": 5, "strength": 0.30}
+
+
 def test_current_devices_none_for_inactive_target():
     engine = AudioEngine()
     assert engine.current_devices("feeder") is None
