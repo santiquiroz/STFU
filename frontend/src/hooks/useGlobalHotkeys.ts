@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { register, unregisterAll, type ShortcutEvent } from "@tauri-apps/plugin-global-shortcut";
 import { api, DeviceInfo, StatusResponse } from "../services/api";
+import { useDevices } from "./useDevices";
 
 export const HOTKEY_BYPASS = "CommandOrControl+Alt+M";
 export const HOTKEY_MUSIC = "CommandOrControl+Alt+N";
@@ -36,6 +37,14 @@ export function useGlobalHotkeys() {
     queryFn: api.getFeederStatus,
     refetchInterval: 2000,
   });
+
+  // Mismo razonamiento para ["devices"]: startMusicModeFromHotkey lo lee vía
+  // getQueryData para el fallback de input/output device. useDevices() usa
+  // el mismo queryKey que Simple.tsx/Studio.tsx, así que dedupe y solo
+  // agrega un observer — sin este, el atajo de Modo música se apaga en
+  // silencio con el mismo bug de gcTime si el usuario deja STFU en
+  // Modelos/Sistema más de lo que dura el cache.
+  useDevices();
 
   useEffect(() => {
     let bypassBusy = false;
