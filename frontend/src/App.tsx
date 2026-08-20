@@ -5,8 +5,16 @@ import { Studio } from "./pages/Studio";
 import { Models } from "./pages/Models";
 import { System } from "./pages/System";
 import { Nav } from "./components/Nav";
+import { useGlobalHotkeys } from "./hooks/useGlobalHotkeys";
 
 const queryClient = new QueryClient();
+
+// Registra los atajos globales del SO (funcionan sin foco en STFU). Vive
+// dentro del QueryClientProvider porque necesita leer/invalidar sus queries.
+function GlobalHotkeys() {
+  useGlobalHotkeys();
+  return null;
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
@@ -15,6 +23,7 @@ export default function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <GlobalHotkeys />
       <div className="flex flex-col min-h-screen">
         <Nav active={activeTab} onChange={setActiveTab} />
         <div className="flex-1">

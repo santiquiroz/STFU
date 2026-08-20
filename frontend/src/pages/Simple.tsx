@@ -242,7 +242,9 @@ export function Simple() {
           <div>
             <div className="flex items-center justify-between mb-1">
               <p className="text-xs text-zinc-400">A/B — Original ⇄ Limpio</p>
-              <p className="text-[10px] text-zinc-600">barra espaciadora</p>
+              <p className="text-[10px] text-zinc-600" title="Ctrl+Alt+M funciona aunque STFU no tenga foco">
+                barra espaciadora · Ctrl+Alt+M
+              </p>
             </div>
             <div className="flex rounded-lg overflow-hidden border border-zinc-700">
               <button
@@ -301,10 +303,12 @@ export function Simple() {
         onClick={handleMusicMode}
         disabled={micBusy || effectiveInput === undefined}
         className="w-full flex items-center justify-center gap-2"
+        title="Ctrl+Alt+N funciona aunque STFU no tenga foco"
       >
         🎵 Modo música
         {musicMode && <Badge label="activo" tone="green" />}
       </Button>
+      <p className="text-center text-[10px] text-zinc-600 -mt-3">Ctrl+Alt+N</p>
 
       <div className="flex flex-col items-center gap-2">
         <p className="text-center text-zinc-600 text-xs">

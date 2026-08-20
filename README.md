@@ -36,6 +36,7 @@ STFU gives you:
 - [x] **Any-device runtime**: `auto | cpu | gpu` selection with a probe + explicit fallback (NaN-guarded); NPU (`npu`) scaffolded for the runtime-pack work
 - [x] **Model hub with UI**: curated catalog, browse/download/activate/delete straight from the app, verified SHA-256, and **live model swap** (no stream restart)
 - [x] **Voice Studio** (tab "Estudio"): visual DSP chain editor, live spectrum visualizer, dB reduction meter, scene presets (Gaming / Reunión / Streaming / Podcast / Música / Accesibilidad), A/B bypass (spacebar), and Music Mode
+- [x] **OS-wide global hotkeys** (`tauri-plugin-global-shortcut`): `Ctrl+Alt+M` toggles A/B bypass and `Ctrl+Alt+N` toggles Music Mode, both working even when STFU isn't the focused window (the spacebar A/B toggle still requires focus, for in-window use)
 - [x] **APO auto-repair**: health-check + automatic repair of the APO registration — recovers from Windows 11 24H2 cumulative updates deactivating the APO, and from ghost endpoints, without manual re-registration
 - [x] **Anti-overload auto-degrade**: drops to a lighter tier under sustained pressure, never disables NC
 - [x] Format-proof audio engine: WASAPI auto-convert (any device rate), stateful resampling (soxr), clock-drift servo between devices
