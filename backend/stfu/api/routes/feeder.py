@@ -105,3 +105,38 @@ def feeder_bypass(update: BypassUpdate):
     if not ok:
         raise HTTPException(404, "feeder no está activo")
     return {"ok": True, "bypass": update.on}
+
+
+class PluginInsert(BaseModel):
+    index: int
+    plugin_id: str
+    parameters: dict = {}
+
+
+@router.post("/plugin")
+def feeder_insert_plugin(body: PluginInsert):
+    """Inserta un plugin en la cadena viva sin reiniciar el feeder (sin
+    corte de audio) — ver AudioEngine.insert_plugin."""
+    try:
+        latency = engine.insert_plugin(
+            _TARGET, body.index,
+            {"plugin_id": body.plugin_id, "parameters": body.parameters},
+        )
+    except (IndexError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+    if latency is None:
+        raise HTTPException(404, "feeder no está activo")
+    return {"ok": True, "latency_ms": latency}
+
+
+@router.delete("/plugin/{index}")
+def feeder_remove_plugin(index: int):
+    """Quita un plugin de la cadena viva sin reiniciar el feeder (sin corte
+    de audio) — ver AudioEngine.remove_plugin."""
+    try:
+        latency = engine.remove_plugin(_TARGET, index)
+    except IndexError as exc:
+        raise HTTPException(400, str(exc))
+    if latency is None:
+        raise HTTPException(404, "feeder no está activo")
+    return {"ok": True, "latency_ms": latency}

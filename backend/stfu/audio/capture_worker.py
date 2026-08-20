@@ -13,6 +13,10 @@ from stfu.core.pipeline import Pipeline
 
 _log = logging.getLogger(__name__)
 
+_OP_REPLACE = "replace"
+_OP_INSERT = "insert"
+_OP_REMOVE = "remove"
+
 
 def _adjust_channels(audio: np.ndarray, out_ch: int) -> np.ndarray:
     proc_ch = audio.shape[1]
@@ -41,7 +45,13 @@ class PipelineWorker:
         self.latency_ms: float = 0.0
 
     def request_swap(self, index: int, plugin) -> None:
-        self._swap_queue.put((index, plugin))
+        self._swap_queue.put((_OP_REPLACE, index, plugin))
+
+    def request_insert(self, index: int, plugin) -> None:
+        self._swap_queue.put((_OP_INSERT, index, plugin))
+
+    def request_remove(self, index: int) -> None:
+        self._swap_queue.put((_OP_REMOVE, index, None))
 
     def set_bypass(self, on: bool) -> None:
         self.bypass = on
@@ -49,14 +59,22 @@ class PipelineWorker:
     def drain_swaps(self) -> None:
         while True:
             try:
-                index, plugin = self._swap_queue.get_nowait()
+                op, index, plugin = self._swap_queue.get_nowait()
             except queue.Empty:
                 return
             try:
-                self._pipeline.replace_plugin(index, plugin)
-                self.pipeline_failed = False  # un modelo nuevo resetea el estado failed
+                self._apply_staged_change(op, index, plugin)
+                self.pipeline_failed = False  # un cambio de cadena exitoso resetea el estado failed
             except Exception:
-                _log.exception("swap de plugin %d falló", index)
+                _log.exception("%s de plugin %d falló", op, index)
+
+    def _apply_staged_change(self, op: str, index: int, plugin) -> None:
+        if op == _OP_REPLACE:
+            self._pipeline.replace_plugin(index, plugin)
+        elif op == _OP_INSERT:
+            self._pipeline.insert_plugin(index, plugin)
+        elif op == _OP_REMOVE:
+            self._pipeline.remove_plugin(index)
 
     def process(self, chunk: np.ndarray) -> np.ndarray:
         """Una excepción de plugin no mata al llamador: marca el estado y el

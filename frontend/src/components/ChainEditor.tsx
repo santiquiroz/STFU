@@ -12,6 +12,7 @@ interface ChainEditorProps {
   applying?: boolean;
   canApply?: boolean;
   liveEditable?: boolean;
+  onLiveApplied?: (chain: PluginConfig[]) => void;
 }
 
 const selectClasses =
@@ -66,6 +67,7 @@ export function ChainEditor({
   applying = false,
   canApply = false,
   liveEditable = false,
+  onLiveApplied,
 }: ChainEditorProps) {
   const { data: catalog, isLoading, isError, error } = usePlugins();
   const [selectedToAdd, setSelectedToAdd] = useState("");
@@ -84,7 +86,15 @@ export function ChainEditor({
   }
 
   function removePlugin(index: number) {
-    onChange(chain.filter((_, i) => i !== index));
+    const nextChain = chain.filter((_, i) => i !== index);
+    onChange(nextChain);
+
+    if (liveEditable) {
+      api
+        .removeFeederPlugin(index)
+        .then(() => onLiveApplied?.(nextChain))
+        .catch(() => {});
+    }
   }
 
   function movePlugin(index: number, direction: -1 | 1) {
@@ -93,8 +103,17 @@ export function ChainEditor({
 
   function addPlugin(pluginId: string) {
     if (!pluginId) return;
-    onChange([...chain, { plugin_id: pluginId, parameters: {} }]);
+    const index = chain.length;
+    const nextChain = [...chain, { plugin_id: pluginId, parameters: {} }];
+    onChange(nextChain);
     setSelectedToAdd("");
+
+    if (liveEditable) {
+      api
+        .insertFeederPlugin(index, pluginId)
+        .then(() => onLiveApplied?.(nextChain))
+        .catch(() => {});
+    }
   }
 
   if (isLoading) {
@@ -173,7 +192,9 @@ export function ChainEditor({
           <p className="text-[11px] text-zinc-500">
             {!canApply
               ? "Activá el micrófono en Control para aplicar."
-              : "Los parámetros numéricos se aplican en vivo mientras la cadena está activa; agregar, quitar o reordenar plugins requiere volver a aplicar."}
+              : liveEditable
+                ? "Cadena activa: parámetros, agregar y quitar plugins se aplican en vivo sin cortar el audio; reordenar requiere volver a aplicar."
+                : "Los parámetros numéricos se aplican en vivo mientras la cadena está activa; agregar, quitar o reordenar plugins requiere volver a aplicar."}
           </p>
         </div>
       </Card>

@@ -86,6 +86,7 @@ export function Studio() {
         applying={applying}
         canApply={canApply}
         liveEditable={liveEditable}
+        onLiveApplied={setAppliedChain}
       />
     </div>
   );

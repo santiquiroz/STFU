@@ -158,6 +158,12 @@ class CaptureThread:
     def request_plugin_swap(self, index: int, plugin) -> None:
         self._pipeline_worker.request_swap(index, plugin)
 
+    def request_plugin_insert(self, index: int, plugin) -> None:
+        self._pipeline_worker.request_insert(index, plugin)
+
+    def request_plugin_remove(self, index: int) -> None:
+        self._pipeline_worker.request_remove(index)
+
     def set_bypass(self, on: bool) -> None:
         """Escritura atómica de un bool: el GIL garantiza que el worker nunca
         ve un estado a medio escribir, sin necesitar lock."""

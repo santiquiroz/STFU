@@ -203,6 +203,20 @@ export const api = {
       })
       .then((r) => r.data),
 
+  insertFeederPlugin: (
+    index: number,
+    pluginId: string,
+    parameters: Record<string, number | string | boolean> = {},
+  ): Promise<{ ok: boolean; latency_ms: number }> =>
+    client
+      .post("/feeder/plugin", { index, plugin_id: pluginId, parameters })
+      .then((r) => r.data),
+
+  removeFeederPlugin: (
+    index: number,
+  ): Promise<{ ok: boolean; latency_ms: number }> =>
+    client.delete(`/feeder/plugin/${index}`).then((r) => r.data),
+
   setParameter: (
     target: "mic" | "speaker",
     pluginIndex: number,

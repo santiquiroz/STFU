@@ -231,5 +231,60 @@ class AudioEngine:
         thread.request_plugin_swap(index, plugin)
         return True
 
+    def insert_plugin(
+        self, target: str, index: int, plugin_config: dict, device: str = "auto",
+    ) -> float | None:
+        """Inserta un plugin en el pipeline vivo sin reiniciar el stream:
+        se construye y warmupea (setup()) en este hilo, igual que
+        swap_model, y el worker aplica el insert en la lista entre chunks.
+        También escribe en _configs (mismo criterio que set_parameter) para
+        que runtime_state()/restart_with_devices reflejen la cadena viva.
+        None si el target no está activo; IndexError si el índice no entra
+        en la cadena actual."""
+        from stfu.core.pipeline_factory import build_pipeline
+        with self._lock:
+            thread = self._threads.get(target)
+            config = self._configs.get(target)
+        if thread is None or config is None:
+            return None
+        current_plugins = thread.pipeline._plugins
+        if not 0 <= index <= len(current_plugins):
+            raise IndexError(f"insert index {index} fuera de rango")
+        staged = build_pipeline([plugin_config], device=device)
+        plugin = staged._plugins[0]
+        plugin.setup(plugin.preferred_format)  # warmup: nunca en el worker
+        preview_plugins = list(current_plugins)
+        preview_plugins.insert(index, plugin)
+        latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
+        thread.request_plugin_insert(index, plugin)
+        with self._lock:
+            plugins_cfg = config.get("plugin_configs")
+            if plugins_cfg is not None:
+                plugins_cfg.insert(index, plugin_config)
+        return latency
+
+    def remove_plugin(self, target: str, index: int) -> float | None:
+        """Quita un plugin del pipeline vivo sin reiniciar el stream — el
+        worker aplica el remove en la lista entre chunks. Escribe en
+        _configs igual que insert_plugin. None si el target no está activo;
+        IndexError si el índice no entra en la cadena actual."""
+        with self._lock:
+            thread = self._threads.get(target)
+            config = self._configs.get(target)
+        if thread is None or config is None:
+            return None
+        current_plugins = thread.pipeline._plugins
+        if not 0 <= index < len(current_plugins):
+            raise IndexError(f"remove index {index} fuera de rango")
+        preview_plugins = list(current_plugins)
+        del preview_plugins[index]
+        latency = thread.pipeline.preview_total_latency_ms(preview_plugins)
+        thread.request_plugin_remove(index)
+        with self._lock:
+            plugins_cfg = config.get("plugin_configs")
+            if plugins_cfg is not None and 0 <= index < len(plugins_cfg):
+                del plugins_cfg[index]
+        return latency
+
 
 engine = AudioEngine()

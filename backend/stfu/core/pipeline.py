@@ -7,6 +7,10 @@ from stfu.core.telemetry import StageMetrics
 from stfu.plugins.base import AudioPlugin
 
 
+def _adapter_or_none(src: AudioFormat, dst: AudioFormat) -> Optional[FormatAdapter]:
+    return FormatAdapter(src, dst) if src != dst else None
+
+
 class Pipeline:
     """Cadena de plugins con adaptación automática de formatos.
 
@@ -72,13 +76,106 @@ class Pipeline:
         old.teardown()
         plugin.setup(setup_in)
         self._plugins[index] = plugin
-        budget_ms = self._input_format.chunk_samples / self._input_format.sample_rate * 1000.0
         new_stages = list(self._stages)
         new_stages[index] = (adapter, plugin)
         new_metrics = list(self._stage_metrics)
-        new_metrics[index] = StageMetrics(plugin.name, budget_ms=budget_ms)
+        new_metrics[index] = StageMetrics(plugin.name, budget_ms=self._budget_ms())
         self._stages = new_stages
         self._stage_metrics = new_metrics
+
+    def insert_plugin(self, index: int, plugin: AudioPlugin) -> None:
+        """Inserta `plugin` (ya seteado por el caller — mismo contrato que
+        replace_plugin/swap_model: warmup fuera del worker, acá solo se
+        reconectan formatos) en `index`. Igual que _swap_stage_in_place, solo
+        toca lo estrictamente necesario: el adapter de entrada del plugin
+        nuevo y, si tiene vecino a la derecha, el adapter que lo alimenta (o
+        el output_adapter si quedó último). Los demás stages conservan su
+        adapter (buffer soxr) intacto — depende del invariante de
+        AudioPlugin.setup(): siempre devuelve el fmt de entrada sin
+        modificar, así que el formato de salida de un stage es siempre su
+        propio preferred_format, sin importar quién sea su vecino."""
+        if not 0 <= index <= len(self._plugins):
+            raise IndexError(f"insert index {index} fuera de rango")
+        new_plugins = list(self._plugins)
+        new_plugins.insert(index, plugin)
+        if self._input_format is None:
+            self._plugins = new_plugins
+            return
+        stages = list(self._stages)
+        metrics = list(self._stage_metrics)
+        upstream = new_plugins[index - 1].preferred_format if index > 0 else self._input_format
+        in_adapter = _adapter_or_none(upstream, plugin.preferred_format)
+        stages.insert(index, (in_adapter, plugin))
+        metrics.insert(index, StageMetrics(plugin.name, budget_ms=self._budget_ms()))
+        output_adapter = self._output_adapter
+        if index + 1 < len(new_plugins):
+            downstream = new_plugins[index + 1]
+            out_adapter = _adapter_or_none(plugin.preferred_format, downstream.preferred_format)
+            stages[index + 1] = (out_adapter, downstream)
+        else:
+            output_adapter = _adapter_or_none(plugin.preferred_format, self._input_format)
+        self._plugins = new_plugins
+        self._stages = stages
+        self._stage_metrics = metrics
+        self._output_adapter = output_adapter
+
+    def remove_plugin(self, index: int) -> None:
+        """Quita el plugin en `index` y reconecta sus vecinos con un adapter
+        nuevo (o ninguno); el resto de la cadena no se toca — mismo criterio
+        quirúrgico que insert_plugin. teardown() del plugin quitado corre acá
+        (hilo que aplica el cambio, igual que replace_plugin)."""
+        if not 0 <= index < len(self._plugins):
+            raise IndexError(f"remove index {index} fuera de rango")
+        removed = self._plugins[index]
+        new_plugins = list(self._plugins)
+        del new_plugins[index]
+        if self._input_format is None:
+            self._plugins = new_plugins
+            removed.teardown()
+            return
+        stages = list(self._stages)
+        metrics = list(self._stage_metrics)
+        del stages[index]
+        del metrics[index]
+        upstream = new_plugins[index - 1].preferred_format if index > 0 else self._input_format
+        output_adapter = self._output_adapter
+        if index < len(new_plugins):
+            downstream = new_plugins[index]
+            out_adapter = _adapter_or_none(upstream, downstream.preferred_format)
+            stages[index] = (out_adapter, downstream)
+        else:
+            output_adapter = _adapter_or_none(upstream, self._input_format)
+        self._plugins = new_plugins
+        self._stages = stages
+        self._stage_metrics = metrics
+        self._output_adapter = output_adapter
+        removed.teardown()
+
+    def preview_total_latency_ms(self, plugins: list[AudioPlugin]) -> float:
+        """Latencia total que tendría el pipeline si `plugins` fuera la
+        cadena activa, sin mutar el pipeline vivo ni llamar a setup() en
+        ningún plugin (solo lee preferred_format/algorithmic_latency_ms —
+        propiedades puras — y arma adapters descartables). Permite al caller
+        (AudioEngine.insert_plugin/remove_plugin) devolver la latencia
+        resultante de un cambio staged antes de que el worker lo aplique."""
+        plugin_lat = sum(p.algorithmic_latency_ms for p in plugins)
+        if self._input_format is None or not plugins:
+            return plugin_lat
+        adapter_lat = 0.0
+        current = self._input_format
+        for plugin in plugins:
+            pref = plugin.preferred_format
+            adapter = _adapter_or_none(current, pref)
+            if adapter is not None:
+                adapter_lat += adapter.buffering_latency_ms
+            current = pref
+        output_adapter = _adapter_or_none(current, self._input_format)
+        if output_adapter is not None:
+            adapter_lat += output_adapter.buffering_latency_ms
+        return plugin_lat + adapter_lat
+
+    def _budget_ms(self) -> float:
+        return self._input_format.chunk_samples / self._input_format.sample_rate * 1000.0
 
     def clear(self) -> None:
         for p in self._plugins:
@@ -92,7 +189,7 @@ class Pipeline:
     def compile(self, input_format: AudioFormat) -> None:
         self._input_format = input_format
         self._out_buffer = np.empty((0, input_format.channels), dtype=np.float32)
-        budget_ms = input_format.chunk_samples / input_format.sample_rate * 1000.0
+        budget_ms = self._budget_ms()
         stage_metrics = [
             StageMetrics(p.name, budget_ms=budget_ms) for p in self._plugins
         ]
@@ -100,16 +197,14 @@ class Pipeline:
         current = input_format
         for plugin in self._plugins:
             pref = plugin.preferred_format
-            adapter = FormatAdapter(current, pref) if current != pref else None
+            adapter = _adapter_or_none(current, pref)
             stages.append((adapter, plugin))
             current = plugin.setup(pref if adapter else current)
         # Reasignación en bloque: un lector concurrente (total_latency_ms desde el
         # hilo de API) nunca ve una lista a medio construir.
         self._stages = stages
         self._stage_metrics = stage_metrics
-        self._output_adapter = (
-            FormatAdapter(current, input_format) if current != input_format else None
-        )
+        self._output_adapter = _adapter_or_none(current, input_format)
 
     def process(self, audio: np.ndarray) -> np.ndarray:
         if not self._plugins:
