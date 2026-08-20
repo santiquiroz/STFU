@@ -5,6 +5,7 @@ import { usePipelineStatus } from "../hooks/usePipeline";
 import { useBypass } from "../hooks/useBypass";
 import { api } from "../services/api";
 import { extractError, Badge, Toggle, Button } from "../components/ui";
+import { StageMeter } from "../components/StageMeter";
 
 export function Simple() {
   const queryClient = useQueryClient();
@@ -309,6 +310,10 @@ export function Simple() {
         <p className="text-center text-zinc-600 text-xs">
           {latency > 0 ? `Latencia: ${latency.toFixed(1)} ms` : "Latencia: —"}
         </p>
+
+        {micOn && status?.streams?.feeder?.stages?.length ? (
+          <StageMeter stages={status.streams.feeder.stages} />
+        ) : null}
 
         {micOn && status?.streams?.feeder?.inference && (
           <div className="flex gap-2">
