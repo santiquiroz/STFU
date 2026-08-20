@@ -1,8 +1,11 @@
+import logging
 import re
 from pathlib import Path
 from pydantic import BaseModel, field_validator
 
 from stfu.hub.registry import _assert_contained
+
+_log = logging.getLogger(__name__)
 
 # \w es Unicode-aware: los presets curados usan nombres en español con tildes
 # (p.ej. "Reunión", "Música"); '/' y '\' ya se rechazan aparte en validate_name.
@@ -37,10 +40,17 @@ class PresetStore:
         # read_bytes (no read_text): JSON es UTF-8 por spec, pero read_text
         # usa la codificación default de la plataforma, que en Windows no
         # siempre es UTF-8 y corrompe nombres con tildes (p.ej. "Reunión").
-        return [
-            PresetSpec.model_validate_json(p.read_bytes())
-            for p in self.base_dir.glob("*.json")
-        ]
+        parsed = (self._try_parse(p) for p in self.base_dir.glob("*.json"))
+        return [preset for preset in parsed if preset is not None]
+
+    def _try_parse(self, path: Path) -> PresetSpec | None:
+        # Un JSON corrupto o editado a mano no debe tumbar el listado entero:
+        # se ignora ese archivo y se sigue con el resto.
+        try:
+            return PresetSpec.model_validate_json(path.read_bytes())
+        except (ValueError, OSError) as e:
+            _log.warning("Preset %s ignorado: no se pudo parsear (%s)", path.name, e)
+            return None
 
     def get(self, name: str) -> PresetSpec | None:
         _assert_contained(self.base_dir, name)

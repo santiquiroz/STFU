@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from stfu.presets.store import PresetSpec, PresetStore
 
 router = APIRouter()
@@ -43,7 +43,13 @@ def list_presets():
 
 @router.get("/presets/{name}")
 def get_preset(name: str):
-    preset = _user_store.get(name)
+    # Un name con forma de traversal (".."/"%2e%2e") hace que _user_store.get
+    # levante ValueError en _assert_contained: un nombre inválido simplemente
+    # no existe → 404 (espeja el manejo de delete_preset).
+    try:
+        preset = _user_store.get(name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail=f"preset {name!r} no encontrado")
     if preset is not None:
         return _to_payload(preset, False)
     preset = _find_curated(name)
@@ -54,7 +60,16 @@ def get_preset(name: str):
 
 @router.post("/presets/{name}")
 def save_preset(name: str, body: PresetUpdate):
-    preset = PresetSpec(name=name, plugins=body.plugins)
+    # Los nombres curados quedan reservados: guardar un shadow de usuario
+    # crearía un huérfano imborrable (delete chequea curados primero → 409).
+    if _find_curated(name) is not None:
+        raise HTTPException(status_code=409, detail="Ya existe un preset predefinido con ese nombre")
+    # PresetSpec se construye a mano (no viene del body-parsing de FastAPI),
+    # así que su ValidationError no se auto-traduce: hay que mapearlo a 400.
+    try:
+        preset = PresetSpec(name=name, plugins=body.plugins)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     _user_store.save(preset)
     return _to_payload(preset, False)
 

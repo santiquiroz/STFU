@@ -1,7 +1,16 @@
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from stfu.main import app
 
 client = TestClient(app)
+
+
+def _use_tmp_user_store(tmp_path, monkeypatch):
+    import stfu.api.routes.presets as pr
+    from stfu.presets.store import PresetStore
+    monkeypatch.setattr(pr, "_user_store", PresetStore(tmp_path / "presets"))
+    return pr
 
 
 def test_list_includes_curated():
@@ -49,3 +58,41 @@ def test_delete_accented_curated_rejected():
 
     r2 = client.delete("/presets/Reunión")
     assert r2.status_code == 409
+
+
+def test_get_traversal_name_returns_404_not_500(tmp_path, monkeypatch):
+    # FIX 1: un name con forma de traversal llega al handler y hace que
+    # _user_store.get levante ValueError → debe mapearse a 404, no a 500.
+    pr = _use_tmp_user_store(tmp_path, monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        pr.get_preset("..")
+    assert exc.value.status_code == 404
+
+
+def test_get_traversal_name_over_http_never_500(tmp_path, monkeypatch):
+    # Mismo caso vía HTTP: sea que lo intercepte el routing o el handler,
+    # nunca debe ser 500.
+    _use_tmp_user_store(tmp_path, monkeypatch)
+    r = client.get("/presets/%2e%2e")
+    assert r.status_code != 500
+
+
+def test_save_too_long_name_returns_400_not_500(tmp_path, monkeypatch):
+    # FIX 2: PresetSpec se construye a mano; su ValidationError debe dar 400.
+    _use_tmp_user_store(tmp_path, monkeypatch)
+    long_name = "x" * 65
+    r = client.post(f"/presets/{long_name}", json={"plugins": []})
+    assert r.status_code == 400
+
+
+def test_save_curated_name_rejected_409(tmp_path, monkeypatch):
+    # FIX 3: guardar sobre un nombre curado se rechaza con 409 y no crea
+    # un shadow de usuario (el listado sigue con un único "Gaming" builtin).
+    _use_tmp_user_store(tmp_path, monkeypatch)
+    r = client.post("/presets/Gaming", json={"plugins": [{"plugin_id": "gain", "parameters": {}}]})
+    assert r.status_code == 409
+
+    listing = client.get("/presets").json()
+    gaming = [p for p in listing if p["name"] == "Gaming"]
+    assert len(gaming) == 1
+    assert gaming[0]["builtin"] is True

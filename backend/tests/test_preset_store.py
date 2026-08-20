@@ -51,3 +51,20 @@ def test_name_rejects_empty_and_too_long(tmp_path):
         PresetSpec(name="", plugins=[])
     with pytest.raises(ValueError):
         PresetSpec(name="x" * 65, plugins=[])
+
+
+def test_list_skips_corrupt_json_without_raising(tmp_path):
+    s = _store(tmp_path)
+    s.save(PresetSpec(name="ok", plugins=[]))
+    (s.base_dir / "corrupt.json").write_text("{ not valid json ", encoding="utf-8")
+    names = {p.name for p in s.list()}
+    assert names == {"ok"}
+
+
+def test_list_skips_json_failing_schema(tmp_path):
+    s = _store(tmp_path)
+    s.save(PresetSpec(name="ok", plugins=[]))
+    # JSON válido pero que no cumple el esquema (name faltante) también se ignora.
+    (s.base_dir / "bad-schema.json").write_text('{"plugins": []}', encoding="utf-8")
+    names = {p.name for p in s.list()}
+    assert names == {"ok"}
