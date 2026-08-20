@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { register, unregisterAll, type ShortcutEvent } from "@tauri-apps/plugin-global-shortcut";
 import { api, DeviceInfo, StatusResponse } from "../services/api";
 
@@ -22,6 +22,20 @@ function wasPressed(event: ShortcutEvent): boolean {
 // vez que cambia el estado del feeder).
 export function useGlobalHotkeys() {
   const queryClient = useQueryClient();
+
+  // GlobalHotkeys es el único componente montado durante toda la vida de la
+  // app (a diferencia de Simple/Studio, que solo observan feeder-status
+  // mientras su tab está activo). Sin este observer propio, gcTime por
+  // defecto de TanStack Query puede purgar la cache de ["feeder-status"]
+  // si el usuario deja STFU en Modelos/Sistema (o minimizado) más de 5 min,
+  // y el guard de actividad de abajo dejaría de disparar el atajo global.
+  // Mismo queryKey/queryFn/refetchInterval que Simple.tsx: dedupe, no pega
+  // dos veces al backend.
+  useQuery({
+    queryKey: ["feeder-status"],
+    queryFn: api.getFeederStatus,
+    refetchInterval: 2000,
+  });
 
   useEffect(() => {
     let bypassBusy = false;
