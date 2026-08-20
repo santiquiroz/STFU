@@ -3,46 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDevices } from "../hooks/useDevices";
 import { usePipelineStatus } from "../hooks/usePipeline";
 import { api } from "../services/api";
-import { Spinner, extractError, Badge } from "../components/ui";
-
-function Toggle({
-  on,
-  loading,
-  disabled,
-  onChange,
-}: {
-  on: boolean;
-  loading: boolean;
-  disabled?: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  const blocked = loading || disabled;
-  return (
-    <button
-      onClick={() => !blocked && onChange(!on)}
-      disabled={blocked}
-      className={`w-12 h-6 rounded-full transition-colors ${
-        loading
-          ? "bg-zinc-500 cursor-wait"
-          : disabled
-            ? "bg-zinc-700 cursor-not-allowed opacity-50"
-            : on
-              ? "bg-green-500"
-              : "bg-zinc-600"
-      }`}
-    >
-      {loading ? (
-        <Spinner />
-      ) : (
-        <div
-          className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${
-            on ? "translate-x-6" : ""
-          }`}
-        />
-      )}
-    </button>
-  );
-}
+import { extractError, Badge, Toggle } from "../components/ui";
 
 export function Simple() {
   const queryClient = useQueryClient();

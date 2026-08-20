@@ -66,3 +66,71 @@ export function TierBadge({ tier }: { tier: Tier }) {
   const { tone, label } = tierMap[tier];
   return <Badge label={label} tone={tone} />;
 }
+
+export function Toggle({
+  on,
+  loading,
+  disabled,
+  onChange,
+}: {
+  on: boolean;
+  loading: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  const blocked = loading || disabled;
+  return (
+    <button
+      onClick={() => !blocked && onChange(!on)}
+      disabled={blocked}
+      className={`w-12 h-6 rounded-full transition-colors ${
+        loading
+          ? "bg-zinc-500 cursor-wait"
+          : disabled
+            ? "bg-zinc-700 cursor-not-allowed opacity-50"
+            : on
+              ? "bg-green-500"
+              : "bg-zinc-600"
+      }`}
+    >
+      {loading ? (
+        <Spinner />
+      ) : (
+        <div
+          className={`w-5 h-5 bg-white rounded-full shadow transition-transform mx-0.5 ${
+            on ? "translate-x-6" : ""
+          }`}
+        />
+      )}
+    </button>
+  );
+}
+
+export function Button({
+  variant = "primary",
+  children,
+  className,
+  ...props
+}: {
+  variant?: "primary" | "ghost" | "destructive";
+  children: React.ReactNode;
+  className?: string;
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const variantClasses: Record<string, string> = {
+    primary: "bg-green-600 hover:bg-green-500 text-white",
+    ghost: "bg-zinc-700 hover:bg-zinc-600 text-zinc-200",
+    destructive: "bg-red-800 hover:bg-red-700 text-red-100",
+  };
+
+  const baseClasses = "rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+  const variantClass = variantClasses[variant] || variantClasses.primary;
+
+  return (
+    <button
+      className={`${baseClasses} ${variantClass} ${className ?? ""}`}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
